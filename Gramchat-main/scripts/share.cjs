@@ -6,12 +6,13 @@
  *
  *   npm run share              build if needed, start, open tunnel
  *   npm run share -- --build   force a fresh frontend build
- *   npm run share -- --no-tunnel   just run locally (LAN / localhost)
+ *   npm run share -- --lan     no tunnel: serve on your local network only (phone + laptop on the same router)
  */
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const os = require("node:os");
 
 const root = path.resolve(__dirname, "..");
 const backendDir = path.join(root, "backend");
@@ -21,6 +22,17 @@ const args = new Set(process.argv.slice(2));
 
 const say = (m = "") => console.log(m);
 const die = (m) => { console.error(`\n✖ ${m}\n`); process.exit(1); };
+
+// 0. Node version (the frontend toolchain needs Node 20.19+ or 22.12+)
+{
+  const [maj, min] = process.versions.node.split(".").map(Number);
+  if (!((maj === 20 && min >= 19) || (maj === 22 && min >= 12) || maj > 22)) {
+    die(`Node ${process.versions.node} is too old. Install the current LTS from https://nodejs.org (need 20.19+ or 22.12+).`);
+  }
+}
+
+const lanOnly = args.has("--no-tunnel") || args.has("--lan");
+const lanIps = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === "IPv4" && !i.internal).map((i) => i.address);
 
 // 1. dependencies
 for (const dir of [backendDir, frontendDir]) {
@@ -51,7 +63,8 @@ if (args.has("--build") || !fs.existsSync(dist)) {
 const server = spawn(process.execPath, ["src/index.js"], {
   cwd: backendDir,
   stdio: ["ignore", "pipe", "inherit"],
-  env: { ...process.env, NODE_ENV: "production" },
+  // plain-http LAN use can't keep `Secure` cookies, so relax that flag only for LAN-only mode
+  env: { ...process.env, NODE_ENV: "production", ...(lanOnly && !process.env.COOKIE_SECURE ? { COOKIE_SECURE: "false" } : {}) },
 });
 let ready = false;
 server.stdout.on("data", (d) => {
@@ -65,7 +78,18 @@ function onReady() {
   const local = `http://localhost:${PORT}`;
   say(`\n✔ Gramchat is running locally:  ${local}`);
 
-  if (args.has("--no-tunnel")) return say("  (tunnel disabled)  On your Wi-Fi others can try http://<this-PC-ip>:" + PORT + " — set COOKIE_SECURE=false in backend/.env for plain http.");
+  if (lanOnly) {
+    say(`\n┌────────────────────────────────────────────────────────────┐`);
+    say(`  LOCAL NETWORK MODE. On your phone (same Wi-Fi/router) open:\n`);
+    (lanIps.length ? lanIps : ["<this-PC's-IP>"]).forEach((ip) => say(`    http://${ip}:${PORT}`));
+    say(`\n  • Text chat, photos, files and statuses work over plain http.`);
+    say(`  • Calls (camera/mic) and "install app" are blocked by browsers on plain http;`);
+    say(`    use  npm run share  (https link) when you want to test calls.`);
+    say(`  • If the phone can't connect: allow Node.js through Windows Firewall (Private networks),`);
+    say(`    and make sure the router's "AP/client isolation" is off.`);
+    say(`└────────────────────────────────────────────────────────────┘`);
+    return;
+  }
 
   const probe = spawnSync("cloudflared", ["--version"], { shell: process.platform === "win32" });
   if (probe.error || probe.status !== 0) {

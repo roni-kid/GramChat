@@ -4,7 +4,7 @@ Your PC is the server. A free tunnel gives it a public HTTPS address so a friend
 (or phone) can open it. Nothing is paid and no account is needed.
 
 ## 1. One-time setup
-1. Install Node 18+ and MongoDB Community (running locally).
+1. Install Node 20.19+ (or 22.12+) and MongoDB Community (running locally).
 2. `npm run setup`
 3. Install the tunnel tool once:
    - Windows: `winget install --id Cloudflare.cloudflared`
@@ -46,8 +46,9 @@ TURN_CREDENTIAL=...
 Check it is active: log in and open `/api/calls/ice`; you should see a second entry with `turn:` URLs.
 
 ## Same Wi-Fi only (no tunnel)
-`npm run share -- --no-tunnel`, then open `http://<your-pc-ip>:5001` on the other device. Because that is plain http,
-add `COOKIE_SECURE=false` to `backend/.env`, and note that calls (camera/mic) will be blocked by the browser on plain http.
+`npm run share -- --lan` prints the address (e.g. `http://192.168.1.20:5001`) to open on your phone; it relaxes the cookie
+flag for you. Because it is plain http, browsers block calls (camera/mic) and app-install there; use the tunnel for call tests.
+If the phone cannot connect, allow Node.js through Windows Firewall on Private networks and turn off "AP/client isolation" on the router.
 
 ## Honest limits
 - Your PC must be on and online. Messages sent while the other person is offline are stored and shown when they next open the app (no push notifications yet).

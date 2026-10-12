@@ -19,7 +19,7 @@ No Cloudinary, no third-party services, no ads.
 - **Security:** cookie-authenticated sockets, per-endpoint authorisation, rate-limited login, validated inputs
 
 ## Quick start
-Prerequisites: **Node 18+** and **MongoDB** running locally (`mongodb://127.0.0.1:27017`).
+Prerequisites: **Node 20.19+ (or 22.12+)** and **MongoDB** running locally (`mongodb://127.0.0.1:27017`).
 
 ```bash
 npm run setup          # installs backend + frontend
@@ -31,6 +31,7 @@ Optional demo users: `npm run seed` (password for all: `123456`).
 
 ### Share it with someone else (free)
 ```bash
+npm run share -- --lan # same Wi-Fi/router only: prints the address to open on your phone
 npm run share          # builds, starts in production mode, opens a free public HTTPS link (needs `cloudflared`)
 ```
 Details, limits and calls across networks: **docs/SHARING.md**.

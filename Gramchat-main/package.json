@@ -1,0 +1,21 @@
+{
+  "name": "gramchat",
+  "version": "1.0.0",
+  "description": "Private, self-hostable chat app (WhatsApp-style) built with React, Node, MongoDB and Socket.io",
+  "main": "index.js",
+  "scripts": {
+    "setup": "npm install --prefix backend && npm install --prefix frontend",
+    "dev": "node scripts/dev.cjs",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "start": "npm run start --prefix backend",
+    "share": "node scripts/share.cjs",
+    "seed": "npm run seed --prefix backend",
+    "test:api": "node tests/api-e2e.mjs",
+    "test:ui": "python tests/ui-e2e.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}

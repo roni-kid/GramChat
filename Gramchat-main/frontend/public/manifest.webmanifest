@@ -1,0 +1,40 @@
+{
+  "name": "Gramchat",
+  "short_name": "Gramchat",
+  "description": "WhatsApp-style chats, groups, statuses, and calls.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#0f172a",
+  "background_color": "#0f172a",
+  "categories": ["social", "communication"],
+  "icons": [
+    {
+      "src": "/gramchat.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/avatar.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Open chats",
+      "short_name": "Chats",
+      "url": "/",
+      "icons": [{ "src": "/gramchat.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "View status",
+      "short_name": "Status",
+      "url": "/status",
+      "icons": [{ "src": "/gramchat.svg", "sizes": "any", "type": "image/svg+xml" }]
+    }
+  ]
+}

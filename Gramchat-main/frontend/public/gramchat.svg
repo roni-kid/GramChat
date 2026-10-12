@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Gramchat</title>
+  <desc id="desc">Gramchat speech bubble app icon</desc>
+  <rect width="256" height="256" rx="56" fill="#0f172a"/>
+  <path fill="#22c55e" d="M128 42c-50.3 0-91 34.8-91 77.8 0 23.6 12.5 45.5 33.5 60.2l-8.1 31.8c-1.6 6.2 5.2 11.1 10.5 7.5l35.8-23.9c6.3 1.4 12.8 2.1 19.3 2.1 50.3 0 91-34.8 91-77.8S178.3 42 128 42Z"/>
+  <path fill="#f8fafc" d="M91 109.5h74c7.2 0 13 5.8 13 13s-5.8 13-13 13H91c-7.2 0-13-5.8-13-13s5.8-13 13-13Zm0 39h46c7.2 0 13 5.8 13 13s-5.8 13-13 13H91c-7.2 0-13-5.8-13-13s5.8-13 13-13Z"/>
+</svg>

@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+/* DaisyUI v5 / Tailwind v4: themes are registered here (tailwind.config.js is not read by v4).
+   Every theme offered on the Settings page must be listed, otherwise picking it does nothing. */
+@plugin "daisyui" {
+  themes: light --default, dark --prefersdark, cupcake, bumblebee, emerald, corporate, synthwave, retro,
+    cyberpunk, valentine, halloween, garden, forest, aqua, lofi, pastel, fantasy, wireframe, black, luxury,
+    dracula, cmyk, autumn, business, acid, lemonade, night, coffee, winter, dim, nord, sunset;
+}
+
+/* Gramchat accent on the dark theme */
+@plugin "daisyui/theme" {
+  name: "dark";
+  --color-primary: orange;
+  --color-primary-content: black;
+}
+
+.input {
+  @apply w-full;
+}
+
+@keyframes status-progress {
+  from { width: 0; }
+  to { width: 100%; }
+}

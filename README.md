@@ -62,8 +62,5 @@ docs/         AUDIT.md · ROADMAP.md · SHARING.md
 - Camera/mic blocked → browsers need HTTPS (or localhost). Use `npm run share`.
 - Logged out immediately over plain http on your LAN → set `COOKIE_SECURE=false` in `backend/.env`.
 
-## Pushing updates (Windows)
-`push-to-github.bat "Describe the update"` builds the frontend, commits and pushes. `.gitignore` keeps `.env`, `node_modules`, `dist` and `uploads/` out of Git.
-
 ## License
 MIT

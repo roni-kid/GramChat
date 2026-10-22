@@ -1,7 +1,8 @@
 import Status from "../models/status.model.js";
 import { emitToUser } from "../lib/socket.js";
 import { saveDataUrl, deleteUpload, UploadError } from "../lib/storage.js";
-import { getContactIds } from "../lib/contacts.js";
+import { getContactIds } from "../lib/relations.js";
+import User from "../models/user.model.js";
 
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -13,11 +14,19 @@ const shape = (status, viewerId) => {
   return { ...o, viewedBy: isOwner ? o.viewedBy : [], viewedByMe };
 };
 
-// Statuses are visible to: yourself + people you have a conversation or a group with.
+// People whose statuses I may see: my contacts, except those who set their status audience to "nobody"
+const visibleAuthors = async (me) => {
+  const contacts = [...(await getContactIds(me))];
+  if (!contacts.length) return [];
+  const hidden = new Set((await User.find({ _id: { $in: contacts }, "privacy.statusAudience": "nobody" }).select("_id").lean()).map((u) => u._id.toString()));
+  return contacts.filter((c) => !hidden.has(c));
+};
+
+// Statuses are visible to: yourself + your contacts (who allow it).
 export const getStatuses = async (req, res) => {
   try {
     const me = req.user._id;
-    const contacts = [...(await getContactIds(me))];
+    const contacts = await visibleAuthors(me);
     const statuses = await Status.find({ expiresAt: { $gt: new Date() }, userId: { $in: [me, ...contacts] } })
       .populate("userId", "fullName profilePic")
       .sort({ createdAt: -1 });
@@ -40,8 +49,9 @@ export const createStatus = async (req, res) => {
     const status = await Status.create({ userId, text: text?.trim() || undefined, image: imageUrl, bgColor: bgColor || "#1a1a2e" });
     await status.populate("userId", "fullName profilePic");
 
-    const contacts = await getContactIds(userId);
-    contacts.forEach((c) => emitToUser(c, "newStatus", shape(status, c)));
+    if (req.user.privacy?.statusAudience !== "nobody") {
+      (await getContactIds(userId)).forEach((c) => emitToUser(c, "newStatus", shape(status, c)));
+    }
     res.status(201).json(shape(status, userId));
   } catch (error) {
     if (error instanceof UploadError) return res.status(400).json({ message: error.message });
@@ -58,7 +68,7 @@ export const viewStatus = async (req, res) => {
     if (!status || status.expiresAt <= new Date()) return res.status(404).json({ message: "Status not found" });
 
     const ownerId = status.userId.toString();
-    if (ownerId !== viewerId.toString() && !(await getContactIds(viewerId)).has(ownerId)) {
+    if (ownerId !== viewerId.toString() && !(await visibleAuthors(viewerId)).includes(ownerId)) {
       return res.status(404).json({ message: "Status not found" });
     }
     if (!status.viewedBy.map(String).includes(viewerId.toString()) && ownerId !== viewerId.toString()) {

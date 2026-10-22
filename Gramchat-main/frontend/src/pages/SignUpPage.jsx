@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuthStore } from "../store/useAuthStore";
-import { Eye, EyeOff, Loader2, Lock, Mail, MessageSquare, User } from "lucide-react";
+import { AtSign, Check, Eye, EyeOff, Loader2, Lock, MessageSquare, User, X } from "lucide-react";
+import { axiosInstance } from "../lib/axios";
 import { Link } from "react-router-dom";
 
 import AuthImagePattern from "../components/AuthImagePattern";
@@ -9,17 +10,34 @@ import toast from "react-hot-toast";
 const SignUpPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
+    username: "",
     fullName: "",
-    email: "",
     password: "",
   });
+  // null = not checked yet, otherwise { available, reason }
+  const [nameCheck, setNameCheck] = useState(null);
+
+  // live "is this username free?" while typing (debounced)
+  useEffect(() => {
+    const u = formData.username.trim().replace(/^@/, "");
+    if (u.length < 3) { setNameCheck(null); return; }
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await axiosInstance.get("/auth/username-available", { params: { username: u } });
+        setNameCheck(data);
+      } catch {
+        setNameCheck(null);
+      }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [formData.username]);
 
   const { signup, isSigningUp } = useAuthStore();
 
   const validateForm = () => {
-    if (!formData.fullName.trim()) return toast.error("Full name is required");
-    if (!formData.email.trim()) return toast.error("Email is required");
-    if (!/\S+@\S+\.\S+/.test(formData.email)) return toast.error("Invalid email format");
+    const u = formData.username.trim().replace(/^@/, "");
+    if (!/^[A-Za-z][A-Za-z0-9_]{2,19}$/.test(u)) return toast.error("Username: 3-20 letters, numbers or _, starting with a letter");
+    if (nameCheck && nameCheck.available === false) return toast.error(nameCheck.reason || "That username is taken");
     if (!formData.password) return toast.error("Password is required");
     if (formData.password.length < 6) return toast.error("Password must be at least 6 characters");
 
@@ -56,7 +74,37 @@ const SignUpPage = () => {
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="form-control">
               <label className="label">
-                <span className="label-text font-medium">Full Name</span>
+                <span className="label-text font-medium">Username</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <AtSign className="size-5 text-base-content/40" />
+                </div>
+                <input
+                  type="text"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  autoComplete="username"
+                  className={`input input-bordered w-full pl-10 pr-10`}
+                  placeholder="your_username"
+                  maxLength={21}
+                  value={formData.username}
+                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                />
+                {nameCheck && (
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                    {nameCheck.available ? <Check className="size-5 text-success" /> : <X className="size-5 text-error" />}
+                  </div>
+                )}
+              </div>
+              <p className={`text-xs mt-1 ${nameCheck && !nameCheck.available ? "text-error" : "text-base-content/50"}`}>
+                {nameCheck?.available === false ? nameCheck.reason : nameCheck?.available ? "Available" : "This is how friends find you. Letters, numbers and _ (3-20)."}
+              </p>
+            </div>
+
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text font-medium">Display name <span className="text-base-content/40">(optional)</span></span>
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -66,26 +114,9 @@ const SignUpPage = () => {
                   type="text"
                   className={`input input-bordered w-full pl-10`}
                   placeholder="John Doe"
+                  maxLength={60}
                   value={formData.fullName}
                   onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="form-control">
-              <label className="label">
-                <span className="label-text font-medium">Email</span>
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="size-5 text-base-content/40" />
-                </div>
-                <input
-                  type="email"
-                  className={`input input-bordered w-full pl-10`}
-                  placeholder="you@example.com"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 />
               </div>
             </div>

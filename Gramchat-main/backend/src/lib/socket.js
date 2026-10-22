@@ -5,6 +5,8 @@ import jwt from "jsonwebtoken";
 import { getClientOrigins } from "./config.js";
 import User from "../models/user.model.js";
 import Group from "../models/group.model.js";
+import Message from "../models/message.model.js";
+import { areContacts, getContactIds } from "./relations.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -28,8 +30,27 @@ export const joinUserToGroup = (userId, groupId) => io.in(userRoom(userId.toStri
 export const removeUserFromGroup = (userId, groupId) => io.in(userRoom(userId.toString())).socketsLeave(groupRoom(groupId.toString()));
 export const isUserOnline = (userId) => (io.sockets.adapter.rooms.get(userRoom(userId.toString()))?.size || 0) > 0;
 
-const onlineIds = () =>
-  [...io.sockets.adapter.rooms.keys()].filter((r) => r.startsWith("user:")).map((r) => r.slice(5));
+// Presence is only shared between contacts, and never for people who switched "show when I'm online" off.
+const emitPresence = async (userId) => {
+  const contacts = await getContactIds(userId);
+  const online = [...contacts].filter(isUserOnline);
+  let visible = online;
+  if (online.length) {
+    const hidden = new Set((await User.find({ _id: { $in: online }, "privacy.showOnline": false }).select("_id").lean()).map((u) => u._id.toString()));
+    visible = online.filter((id) => !hidden.has(id));
+  }
+  emitToUser(userId, "getOnlineUsers", visible);
+};
+
+/** Recompute what `userId` sees, and what each of their contacts sees about them. */
+export const refreshPresence = async (userId) => {
+  try {
+    await emitPresence(userId);
+    for (const c of await getContactIds(userId)) if (isUserOnline(c)) await emitPresence(c);
+  } catch (e) {
+    console.log("presence refresh failed:", e.message);
+  }
+};
 
 const parseCookies = (header = "") =>
   Object.fromEntries(
@@ -55,6 +76,19 @@ io.use(async (socket, next) => {
   }
 });
 
+// Delivery receipts: anything sent to `userId` while they had no connection is now delivered (second tick for the sender).
+const markDelivered = async (userId) => {
+  try {
+    const pending = { receiverId: userId, groupId: null, deliveredAt: null };
+    const senders = await Message.distinct("senderId", pending);
+    if (!senders.length) return;
+    await Message.updateMany(pending, { $set: { deliveredAt: new Date() } });
+    senders.forEach((s) => emitToUser(s, "messagesDelivered", { to: userId.toString() }));
+  } catch (e) {
+    console.log("delivery sweep failed:", e.message);
+  }
+};
+
 const isMember = async (groupId, userId) => {
   if (!/^[a-f\d]{24}$/i.test(String(groupId))) return false;
   return !!(await Group.exists({ _id: groupId, members: userId }));
@@ -68,11 +102,15 @@ io.on("connection", async (socket) => {
   const groups = await Group.find({ members: userId }).select("_id").lean();
   groups.forEach((g) => socket.join(groupRoom(g._id.toString())));
 
-  io.emit("getOnlineUsers", onlineIds());
+  refreshPresence(userId);
+  markDelivered(userId);
 
   // ── Typing (DM) ──
-  socket.on("typing", ({ receiverId } = {}) => receiverId && emitToUser(receiverId, "userTyping", { senderId: userId }));
-  socket.on("stopTyping", ({ receiverId } = {}) => receiverId && emitToUser(receiverId, "userStopTyping", { senderId: userId }));
+  const toContact = async (to, event, payload) => {
+    if (typeof to === "string" && (await areContacts(userId, to))) emitToUser(to, event, payload);
+  };
+  socket.on("typing", ({ receiverId } = {}) => toContact(receiverId, "userTyping", { senderId: userId }));
+  socket.on("stopTyping", ({ receiverId } = {}) => toContact(receiverId, "userStopTyping", { senderId: userId }));
 
   // ── Typing (group): only members may emit into a group room ──
   socket.on("groupTyping", ({ groupId } = {}) => {
@@ -89,9 +127,9 @@ io.on("connection", async (socket) => {
   socket.on("leaveGroup", () => {});
 
   // ── WebRTC signalling. Caller identity/name/photo come from the server, not the client ──
-  socket.on("call:offer", ({ to, offer, callType } = {}) => {
-    if (!to || !offer || !["voice", "video"].includes(callType)) return;
-    if (!isUserOnline(to)) return socket.emit("call:unavailable", { to });
+  socket.on("call:offer", async ({ to, offer, callType } = {}) => {
+    if (typeof to !== "string" || !offer || !["voice", "video"].includes(callType)) return;
+    if (!(await areContacts(userId, to)) || !isUserOnline(to)) return socket.emit("call:unavailable", { to });
     emitToUser(to, "call:incoming", {
       from: userId,
       offer,
@@ -99,14 +137,14 @@ io.on("connection", async (socket) => {
       callerInfo: { fullName: socket.data.user.fullName, profilePic: socket.data.user.profilePic },
     });
   });
-  socket.on("call:answer", ({ to, answer } = {}) => to && emitToUser(to, "call:answered", { from: userId, answer }));
-  socket.on("call:reject", ({ to } = {}) => to && emitToUser(to, "call:rejected", { from: userId }));
-  socket.on("call:end", ({ to } = {}) => to && emitToUser(to, "call:ended", { from: userId }));
-  socket.on("call:ice-candidate", ({ to, candidate } = {}) => to && emitToUser(to, "call:ice-candidate", { from: userId, candidate }));
+  socket.on("call:answer", ({ to, answer } = {}) => toContact(to, "call:answered", { from: userId, answer }));
+  socket.on("call:reject", ({ to } = {}) => toContact(to, "call:rejected", { from: userId }));
+  socket.on("call:end", ({ to } = {}) => toContact(to, "call:ended", { from: userId }));
+  socket.on("call:ice-candidate", ({ to, candidate } = {}) => toContact(to, "call:ice-candidate", { from: userId, candidate }));
 
   socket.on("disconnect", () => {
     // The adapter removes this socket from its rooms *after* this event, so recompute next tick.
-    setImmediate(() => io.emit("getOnlineUsers", onlineIds()));
+    setImmediate(() => refreshPresence(userId));
   });
 });
 

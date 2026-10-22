@@ -10,10 +10,12 @@ No Cloudinary, no third-party services, no ads.
 > Everything stays on that server (no third parties), but tell your friends. E2EE is Phase 3 of the roadmap.
 
 ## Features
-- **Messaging:** realtime 1-on-1 chat, typing indicators, read receipts, replies, emoji reactions, in-chat search, unread badges, last-message previews
+- **Accounts & contacts:** sign up with just a username (no email or phone), add friends by their exact username, accept or decline requests, block people, and choose what contacts see (online status, read receipts, status audience). Strangers can't see or message you.
+- **Messaging:** realtime 1-on-1 chat, typing indicators, read receipts, replies, emoji reactions, in-chat search, unread badges, last-message previews, infinite scroll
+- **Reliable sending:** messages appear instantly, queue up and retry when the connection drops (never duplicated), unsent messages survive a reload, drafts are kept per chat
 - **Media:** photos, video, audio and documents stored on *your* disk (login-required to view, type allow-list, size caps)
 - **Groups:** admin-managed groups, live member changes, typing, reactions, replies
-- **Status:** 24-hour text/photo statuses, visible only to people you share a chat/group with; only you see who viewed
+- **Status:** 24-hour text/photo statuses, visible only to your contacts (if you allow it); only you see who viewed
 - **Calls:** voice & video (WebRTC), mute/camera, duration, ring timeout; TURN-ready for strict networks
 - **App:** installable PWA (Windows / Android), 32 themes, responsive, multi-tab/multi-device presence
 - **Security:** cookie-authenticated sockets, per-endpoint authorisation, rate-limited login, validated inputs
@@ -27,7 +29,9 @@ npm run dev            # backend :5001, frontend :5173  → open http://localhos
 ```
 `backend/.env` is needed (copy `backend/.env.example`, set `JWT_SECRET`). `npm run share` creates one for you.
 
-Optional demo users: `npm run seed` (password for all: `123456`).
+Create an account with a username. To chat, tap **Add contact**, enter your friend's exact username, and they accept. Accounts made before usernames existed were given one automatically (see **Profile**) and can still log in with their old email.
+
+Optional demo users: `npm run seed` (log in with a username such as `emma_thompson`, password `123456`; they are already contacts of each other).
 
 ### Share it with someone else (free)
 ```bash

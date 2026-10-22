@@ -17,7 +17,7 @@ npm run share
 ```
 It builds the app if needed, creates `backend/.env` with a random secret if you don't have one, starts the server in
 production mode and prints a link like `https://random-words.trycloudflare.com`. Send that link to your friend.
-They sign up (their account lives in **your** database) and you can message each other.
+They sign up with a username (their account lives in **your** database). You add each other by username (**Add contact**, then they accept) and can then message.
 
 Keep the window open. Stop with Ctrl+C. The link changes each run.
 

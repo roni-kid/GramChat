@@ -30,6 +30,8 @@ const groupSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Message",
     },
+    // Phase 2D: disappearing messages. Seconds new messages live (0 = off). Only the admin can change it.
+    disappearAfter: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

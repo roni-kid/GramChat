@@ -1,6 +1,10 @@
 import { config } from "dotenv";
 import { connectDB } from "../lib/db.js";
 import bcrypt from "bcryptjs";
+import Contact from "../models/contact.model.js";
+import { suggestUsername } from "../lib/username.js";
+import { pairKey } from "../lib/relations.js";
+import { runMigrations } from "../lib/migrate.js";
 import User from "../models/user.model.js";
 
 config();
@@ -106,8 +110,20 @@ const seedDatabase = async () => {
     await connectDB();
 
     const hashed = await bcrypt.hash("123456", 10);
-    await User.insertMany(seedUsers.map((u) => ({ ...u, password: hashed })));
-    console.log("Database seeded. Log in as any seed user with password: 123456");
+    const used = new Set();
+    const docs = seedUsers.map((u) => {
+      let name = suggestUsername(u.fullName), n = 1;
+      while (used.has(name)) name = `${name.slice(0, 16)}${++n}`;
+      used.add(name);
+      return { ...u, username: name, password: hashed };
+    });
+    const created = await User.insertMany(docs);
+    await runMigrations(); // creates the username index
+    // make the demo users contacts of each other so they can message right away
+    for (let i = 0; i < created.length; i++) for (let j = i + 1; j < created.length; j++) {
+      await Contact.create({ requester: created[i]._id, recipient: created[j]._id, pairKey: pairKey(created[i]._id, created[j]._id), status: "accepted" });
+    }
+    console.log("Database seeded. Log in with a username (e.g. emma_thompson) and password: 123456");
     process.exit(0);
   } catch (error) {
     console.error("Error seeding database:", error.message);

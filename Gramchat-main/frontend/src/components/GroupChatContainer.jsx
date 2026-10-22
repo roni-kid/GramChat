@@ -1,12 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useGroupStore } from "../store/useGroupStore";
 import { useAuthStore } from "../store/useAuthStore";
 import { formatMessageTime } from "../lib/utils";
+import { timerLabel } from "../lib/messageRules";
+import DisappearingModal from "./DisappearingModal";
+import ViewOnceBubble from "./ViewOnceBubble";
 import MessageInput from "./MessageInput";
 import { REACTION_EMOJIS } from "../constants/emoji";
 import MessageSkeleton from "./Skeletons/MessageSkeleton";
 import GroupInfoModal from "./GroupInfoModal";
-import { ArrowLeft, Info, FileText, Film, Download, CornerUpLeft, X } from "lucide-react";
+import { ArrowLeft, Info, FileText, Film, Download, CornerUpLeft, Images, Timer, X } from "lucide-react";
+import toast from "react-hot-toast";
+import MessageMenu from "./MessageMenu";
+import PinnedBar from "./PinnedBar";
+import VoiceMessage from "./VoiceMessage";
+import { MessageFlags, ForwardedLabel, DeletedNote, InlineEditor, PendingFooter, LinkPreviewCard } from "./MessageParts";
+import MediaGalleryModal from "./MediaGalleryModal";
+import { useOutboxStore, toPendingMessage } from "../store/useOutboxStore";
 
 const FileAttachment = ({ fileUrl, fileType, fileName, fileSize }) => {
   if (!fileUrl) return null;
@@ -32,7 +42,7 @@ const ReplyPreview = ({ replyTo }) => {
   return (
     <div className="bg-black/10 border-l-2 border-white/40 rounded px-2 py-1 mb-1 text-xs opacity-80 max-w-xs">
       <p className="font-medium mb-0.5">{senderName}</p>
-      <p className="truncate">{replyTo.text || (replyTo.image ? "📷 Photo" : replyTo.fileName || "Attachment")}</p>
+      <p className="truncate">{replyTo.deletedForEveryone ? "🚫 This message was deleted" : replyTo.text || (replyTo.image ? "📷 Photo" : replyTo.fileName || "Attachment")}</p>
     </div>
   );
 };
@@ -72,20 +82,103 @@ const ReactionBar = ({ reactions, onReact, messageId, authUserId }) => {
 const GroupChatContainer = () => {
   const {
     selectedGroup, groupMessages, isGroupMessagesLoading,
-    getGroupMessages, addGroupReaction, isGroupTyping, groupTypingUser, setReplyingTo,
+    getGroupMessages, addGroupReaction, isGroupTyping, groupTypingUser, setReplyingTo, pinned, getPinned, togglePin,
+    hasMore, isLoadingOlder, loadOlder, loadUntil,
   } = useGroupStore();
   const { authUser, onlineUsers } = useAuthStore();
   const messageEndRef = useRef(null);
+  const messageRefs = useRef({});
+  const scrollRef = useRef(null);
+  const scrollAnchor = useRef(null); // scroll position to restore after older messages are added above
+  const lastTop = useRef(0);
   const [showInfo, setShowInfo] = useState(false);
+  const [showGallery, setShowGallery] = useState(false);
+  const [showTimer, setShowTimer] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [flashId, setFlashId] = useState(null); // the message a search result or gallery tap just jumped to
+  const focus = useGroupStore((s) => s.focus);
 
   const groupId = selectedGroup?._id;
-  useEffect(() => {
-    if (groupId) getGroupMessages(groupId);
-  }, [groupId, getGroupMessages]);
 
+  // Messages still in the send queue are shown at the end of the chat
+  const outbox = useOutboxStore((s) => s.items);
+  const pendingMsgs = useMemo(
+    () => outbox
+      .filter((i) => i.kind === "group" && i.targetId === groupId && !groupMessages.some((m) => m.clientId === i.clientId))
+      .map((i) => toPendingMessage(i, authUser)),
+    [outbox, groupMessages, groupId, authUser]
+  );
+  const shown = useMemo(() => [...groupMessages, ...pendingMsgs], [groupMessages, pendingMsgs]);
+  const lastShownId = shown[shown.length - 1]?._id;
+  const lastHasPreview = !!shown[shown.length - 1]?.linkPreview; // the card arrives after the message and makes it taller
+  useEffect(() => {
+    if (groupId) {
+      getGroupMessages(groupId);
+      getPinned(groupId);
+      setEditingId(null);
+    }
+  }, [groupId, getGroupMessages, getPinned]);
+
+  // Jump to a message (a pin, a search result, a gallery item). If it's older than what's loaded, load older pages until it's there.
+  // Returns whether it was found.
+  const jumpToMessage = async (id, createdAtHint) => {
+    if (!messageRefs.current[id]) {
+      const createdAt = createdAtHint || pinned.find((p) => p._id === id)?.createdAt;
+      if (createdAt) {
+        await loadUntil(createdAt);
+        await new Promise((r) => setTimeout(r, 60)); // let the new messages render
+      }
+    }
+    const el = messageRefs.current[id];
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      return true;
+    }
+    toast("Couldn't find that message");
+    return false;
+  };
+
+  // A search result or the media gallery asked for a message: scroll to it once the group has loaded, then flash it
+  const jumpRef = useRef(null);
+  useEffect(() => { jumpRef.current = jumpToMessage; });
+  useEffect(() => {
+    if (!focus || isGroupMessagesLoading || useGroupStore.getState().isGroupMessagesLoading) return; // runs again when loading ends
+    let alive = true;
+    (async () => {
+      await new Promise((r) => setTimeout(r, 150)); // let the first page render (and its own scroll-to-bottom finish)
+      const found = await jumpRef.current(focus.id, focus.createdAt);
+      if (!alive) return;
+      if (found) setFlashId(focus.id);
+      useGroupStore.getState().clearFocus();
+    })();
+    return () => { alive = false; };
+  }, [focus, isGroupMessagesLoading]);
+  useEffect(() => {
+    if (!flashId) return;
+    const t = setTimeout(() => setFlashId(null), 2200);
+    return () => clearTimeout(t);
+  }, [flashId]);
+
+  // Infinite scroll (see ChatContainer): only upward scrolling near the top loads older messages
+  const onScroll = (e) => {
+    const el = e.currentTarget;
+    const goingUp = el.scrollTop < lastTop.current;
+    lastTop.current = el.scrollTop;
+    if (!goingUp || el.scrollTop > 120 || !hasMore || isLoadingOlder) return;
+    scrollAnchor.current = { height: el.scrollHeight, top: el.scrollTop };
+    loadOlder().then((added) => { if (!added) scrollAnchor.current = null; });
+  };
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!scrollAnchor.current || !el) return;
+    el.scrollTop = scrollAnchor.current.top + (el.scrollHeight - scrollAnchor.current.height);
+    scrollAnchor.current = null;
+  }, [groupMessages]);
+
+  // Scroll to the bottom when a new message ends the chat (not when older ones are added at the top)
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [groupMessages, isGroupTyping]);
+  }, [lastShownId, isGroupTyping, lastHasPreview]);
 
   const typingMember = selectedGroup?.members?.find(
     (m) => (m._id || m) === groupTypingUser
@@ -119,12 +212,23 @@ const GroupChatContainer = () => {
               <h3 className="font-medium hover:text-primary transition-colors">{selectedGroup.name}</h3>
               <p className="text-xs text-base-content/50">
                 {selectedGroup.members?.length || 0} members · {onlineCount} online
+                {selectedGroup.disappearAfter > 0 && (
+                  <span className="ml-1 inline-flex items-center gap-0.5" title={`New messages disappear after ${timerLabel(selectedGroup.disappearAfter)}`}>
+                    · <Timer className="size-3" aria-hidden="true" /> {timerLabel(selectedGroup.disappearAfter)}
+                  </span>
+                )}
               </p>
             </div>
           </div>
 
           {/* Right side actions */}
           <div className="flex items-center gap-1">
+            <button className="btn btn-ghost btn-sm btn-circle" onClick={() => setShowTimer(true)} title="Disappearing messages" aria-label="Disappearing messages">
+              <Timer className={`size-4 ${selectedGroup.disappearAfter > 0 ? "text-primary" : ""}`} />
+            </button>
+            <button className="btn btn-ghost btn-sm btn-circle" onClick={() => setShowGallery(true)} title="Media, links and docs" aria-label="Media, links and docs">
+              <Images className="size-4" />
+            </button>
             <button className="btn btn-ghost btn-sm btn-circle" onClick={() => setShowInfo(true)}>
               <Info className="size-4" />
             </button>
@@ -137,16 +241,22 @@ const GroupChatContainer = () => {
         </div>
       </div>
 
+      {/* Pinned messages */}
+      <PinnedBar pinned={pinned} onJump={jumpToMessage} onUnpin={(id) => togglePin(id, false)} />
+
       {/* Messages */}
       {isGroupMessagesLoading ? (
         <MessageSkeleton />
       ) : (
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {groupMessages.map((message) => {
+        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto p-4 space-y-4">
+          {isLoadingOlder && (
+            <div className="text-center"><span className="loading loading-spinner loading-xs" aria-label="Loading older messages" /></div>
+          )}
+          {shown.map((message) => {
             const isOwn = (message.senderId?._id || message.senderId) === authUser._id;
             const sender = message.senderId;
             return (
-              <div key={message._id} className={`chat group ${isOwn ? "chat-end" : "chat-start"}`}>
+              <div key={message._id} ref={(el) => (messageRefs.current[message._id] = el)} className={`chat group ${isOwn ? "chat-end" : "chat-start"}`}>
                 <div className="chat-image avatar">
                   <div className="size-10 rounded-full border">
                     <img src={sender?.profilePic || "/avatar.png"} alt="avatar" />
@@ -158,24 +268,49 @@ const GroupChatContainer = () => {
                 </div>
 
                 <div className={`flex items-end gap-1 ${isOwn ? "flex-row-reverse" : "flex-row"}`}>
-                  <div className="chat-bubble flex flex-col max-w-xs lg:max-w-sm">
-                    {message.replyTo && <ReplyPreview replyTo={message.replyTo} />}
-                    {message.image && <img src={message.image} alt="Attachment" className="max-w-[200px] rounded-md mb-1" />}
-                    {message.fileUrl && (
-                      <FileAttachment fileUrl={message.fileUrl} fileType={message.fileType}
-                        fileName={message.fileName} fileSize={message.fileSize} />
+                  <div className={`chat-bubble flex flex-col max-w-xs lg:max-w-sm ${flashId === message._id ? "ring-2 ring-primary ring-offset-1" : ""}`}>
+                    {message.deletedForEveryone ? (
+                      <DeletedNote isOwn={isOwn} />
+                    ) : (
+                      <>
+                        <ForwardedLabel message={message} />
+                        {/* View-once: a placeholder; the media itself is only ever fetched when a member opens it */}
+                        {message.viewOnce && <ViewOnceBubble message={message} isOwn={isOwn} store="group" />}
+                        {message.replyTo && <ReplyPreview replyTo={message.replyTo} />}
+                        {message.image && <img src={message.image} alt="Attachment" className="max-w-[200px] rounded-md mb-1" />}
+                        {message.fileUrl && (
+                          message.voice ? (
+                            <VoiceMessage message={message} />
+                          ) : (
+                            <FileAttachment fileUrl={message.fileUrl} fileType={message.fileType}
+                              fileName={message.fileName} fileSize={message.fileSize} />
+                          )
+                        )}
+                        {editingId === message._id ? (
+                          <InlineEditor message={message} store="group" onDone={() => setEditingId(null)} />
+                        ) : (
+                          message.text && <p>{message.text}</p>
+                        )}
+                        {message.linkPreview && editingId !== message._id && <LinkPreviewCard preview={message.linkPreview} />}
+                        <MessageFlags message={message} />
+                      </>
                     )}
-                    {message.text && <p>{message.text}</p>}
                   </div>
-                  <button onClick={() => setReplyingTo(message)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity btn btn-ghost btn-xs btn-circle"
-                    title="Reply">
-                    <CornerUpLeft className="size-3" />
-                  </button>
+                  {!message.deletedForEveryone && !message.viewOnce && !message.pending && (
+                    <button onClick={() => setReplyingTo(message)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity btn btn-ghost btn-xs btn-circle"
+                      title="Reply">
+                      <CornerUpLeft className="size-3" />
+                    </button>
+                  )}
+                  {!message.pending && <MessageMenu message={message} isOwn={isOwn} store="group" onReply={setReplyingTo} onEdit={(m) => setEditingId(m._id)} />}
                 </div>
 
-                <ReactionBar reactions={message.reactions || []} onReact={handleReact}
-                  messageId={message._id} authUserId={authUser._id} />
+                <PendingFooter message={message} />
+                {!message.deletedForEveryone && !message.pending && (
+                  <ReactionBar reactions={message.reactions || []} onReact={handleReact}
+                    messageId={message._id} authUserId={authUser._id} />
+                )}
               </div>
             );
           })}
@@ -195,10 +330,29 @@ const GroupChatContainer = () => {
         </div>
       )}
 
-      <MessageInput store="group" groupId={selectedGroup._id} />
+      <MessageInput key={selectedGroup._id} store="group" groupId={selectedGroup._id} />
 
+      {showTimer && (
+        <DisappearingModal
+          title={selectedGroup.name}
+          current={selectedGroup.disappearAfter || 0}
+          canChange={(selectedGroup.admin?._id || selectedGroup.admin) === authUser._id}
+          who="You're the group admin, so you can change this."
+          onPick={(seconds) => useGroupStore.getState().setDisappearing(selectedGroup._id, seconds)}
+          onClose={() => setShowTimer(false)}
+        />
+      )}
       {showInfo && (
         <GroupInfoModal group={selectedGroup} onClose={() => setShowInfo(false)} />
+      )}
+      {showGallery && (
+        <MediaGalleryModal
+          kind="group"
+          chatId={selectedGroup._id}
+          title={selectedGroup.name}
+          onShow={(m) => useGroupStore.getState().setFocus({ id: m._id, createdAt: m.createdAt })}
+          onClose={() => setShowGallery(false)}
+        />
       )}
     </div>
   );

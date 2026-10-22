@@ -1,6 +1,8 @@
 import { THEMES } from "../constants";
 import { useThemeStore } from "../store/useThemeStore";
+import { useAuthStore } from "../store/useAuthStore";
 import { Send } from "lucide-react";
+import NotificationSettings from "../components/NotificationSettings";
 
 const PREVIEW_MESSAGES = [
   { id: 1, content: "Hey! How's it going?", isSent: false },
@@ -9,10 +11,54 @@ const PREVIEW_MESSAGES = [
 
 const SettingsPage = () => {
   const { theme, setTheme } = useThemeStore();
+  const { authUser, updatePrivacy } = useAuthStore();
+  const privacy = authUser?.privacy || {};
 
   return (
     <div className="h-screen container mx-auto px-4 pt-20 max-w-5xl">
       <div className="space-y-6">
+        <section className="space-y-3">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-lg font-semibold">Privacy</h2>
+            <p className="text-sm text-base-content/70">You decide what your contacts can see. Strangers can only find you by your exact username.</p>
+          </div>
+          <div className="rounded-xl border border-base-300 divide-y divide-base-300">
+            <label className="flex items-center justify-between gap-4 p-4 cursor-pointer">
+              <div>
+                <div className="font-medium">Show when I'm online</div>
+                <div className="text-sm text-base-content/60">Contacts see a green dot when you're connected.</div>
+              </div>
+              <input type="checkbox" className="toggle toggle-primary" checked={privacy.showOnline !== false} onChange={(e) => updatePrivacy({ showOnline: e.target.checked })} />
+            </label>
+            <label className="flex items-center justify-between gap-4 p-4 cursor-pointer">
+              <div>
+                <div className="font-medium">Read receipts</div>
+                <div className="text-sm text-base-content/60">Show “Seen” on messages you read. If you turn it off you won't see others' either.</div>
+              </div>
+              <input type="checkbox" className="toggle toggle-primary" checked={privacy.readReceipts !== false} onChange={(e) => updatePrivacy({ readReceipts: e.target.checked })} />
+            </label>
+            <label className="flex items-center justify-between gap-4 p-4 cursor-pointer">
+              <div>
+                <div className="font-medium">Link previews</div>
+                <div className="text-sm text-base-content/60">When you send a link, this server looks the page up once and adds a card with its title and picture. Your contacts' devices never contact the site. Turn off to send plain links.</div>
+              </div>
+              <input type="checkbox" className="toggle toggle-primary" checked={privacy.linkPreviews !== false} onChange={(e) => updatePrivacy({ linkPreviews: e.target.checked })} />
+            </label>
+            <div className="flex items-center justify-between gap-4 p-4">
+              <div>
+                <div className="font-medium">Who can see my status</div>
+                <div className="text-sm text-base-content/60">Statuses disappear after 24 hours.</div>
+              </div>
+              <select className="select select-bordered select-sm" value={privacy.statusAudience || "contacts"} onChange={(e) => updatePrivacy({ statusAudience: e.target.value })}>
+                <option value="contacts">My contacts</option>
+                <option value="nobody">Nobody</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <NotificationSettings />
+
         <div className="flex flex-col gap-1">
           <h2 className="text-lg font-semibold">Theme</h2>
           <p className="text-sm text-base-content/70">Choose a theme for your chat interface</p>

@@ -13,6 +13,11 @@
     "share": "node scripts/share.cjs",
     "seed": "npm run seed --prefix backend",
     "test:api": "node tests/api-e2e.mjs",
+    "test:api:2a": "node tests/phase2a-e2e.mjs",
+    "test:api:2b": "node tests/phase2b-e2e.mjs",
+    "test:api:2c": "node tests/phase2c-e2e.mjs",
+    "test:api:2d": "node tests/phase2d-e2e.mjs",
+    "test:api:2e": "node tests/phase2e-e2e.mjs",
     "test:ui": "python tests/ui-e2e.py"
   },
   "keywords": [],

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { axiosInstance } from "../lib/axios.js";
 import toast from "react-hot-toast";
 import { io } from "socket.io-client";
+import { removePushOnLogout } from "../lib/pushClient.js";
 
 // undefined = same origin as the page. Override with VITE_SOCKET_URL if the socket server is elsewhere.
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || undefined;
@@ -65,8 +66,11 @@ export const useAuthStore = create((set, get) => ({
 
   logout: async () => {
     try {
+      await removePushOnLogout(); // while the cookie is still valid: stop this device receiving this account's notifications
       await axiosInstance.post("/auth/logout");
       get().disconnectSocket();
+      // Explicit logout: unsent messages and drafts are wiped from this device (stores listen for this)
+      window.dispatchEvent(new Event("gramchat:logout"));
       set({ authUser: null, socket: null, onlineUsers: [] });
       toast.success("Logged out successfully");
     } catch (error) {
@@ -84,6 +88,30 @@ export const useAuthStore = create((set, get) => ({
       toast.error(error.response?.data?.message || "Profile update failed");
     } finally {
       set({ isUpdatingProfile: false });
+    }
+  },
+
+  updateUsername: async (username) => {
+    try {
+      const res = await axiosInstance.put("/auth/username", { username });
+      set({ authUser: res.data });
+      toast.success("Username updated");
+      return true;
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Couldn't change username");
+      return false;
+    }
+  },
+
+  updatePrivacy: async (changes) => {
+    const before = get().authUser;
+    set({ authUser: { ...before, privacy: { ...before.privacy, ...changes } } }); // optimistic
+    try {
+      const res = await axiosInstance.put("/auth/privacy", changes);
+      set({ authUser: res.data });
+    } catch (error) {
+      set({ authUser: before });
+      toast.error(error.response?.data?.message || "Couldn't save setting");
     }
   },
 

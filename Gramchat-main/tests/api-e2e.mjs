@@ -38,10 +38,12 @@ class Client {
 }
 
 const stamp = Date.now();
+const befriend = async (a, b) => { await a.req("POST", `/contacts/request/${b.user._id}`); const r = await b.req("POST", `/contacts/accept/${a.user._id}`); return r.status === 200; };
 const mk = async (label) => {
   const c = new Client(label);
-  const r = await c.req("POST", "/auth/signup", { fullName: label, email: `${label.toLowerCase()}${stamp}@test.com`, password: "secret123" });
-  c.user = r.data; c.email = `${label.toLowerCase()}${stamp}@test.com`;
+  c.username = `${label.toLowerCase().slice(0, 7)}${String(stamp).slice(-9)}`;
+  const r = await c.req("POST", "/auth/signup", { username: c.username, fullName: label, password: "secret123" });
+  c.user = r.data;
   return c;
 };
 
@@ -51,12 +53,13 @@ const alice = await mk("Alice");
 log("auth", "signup returns 201-style user object", !!alice.user?._id);
 const bob = await mk("Bob");
 const carol = await mk("Carol");
+await befriend(alice, bob); await befriend(alice, carol);
 
-let r = await alice.req("POST", "/auth/signup", { fullName: "Dup", email: alice.email, password: "secret123" });
-log("auth", "duplicate email rejected", r.status === 400, r.data?.message);
+let r = await new Client("t").req("POST", "/auth/signup", { username: alice.username, fullName: "Dup", password: "secret123" });
+log("auth", "duplicate username rejected", r.status === 400, r.data?.message);
 
-{ const t = new Client("t"); r = await t.req("POST", "/auth/signup", { fullName: "Dup", email: alice.email.toUpperCase(), password: "secret123" });
-log("auth", "duplicate email with different CASE rejected", r.status === 400, `got ${r.status} (case-sensitive email = duplicate accounts)`); }
+{ const t = new Client("t"); r = await t.req("POST", "/auth/signup", { username: "@" + alice.username.toUpperCase(), fullName: "Dup", password: "secret123" });
+log("auth", "duplicate username with different CASE / leading @ rejected", r.status === 400, `got ${r.status}`); }
 
 r = await alice.req("GET", "/auth/check");
 log("auth", "check auth with cookie", r.status === 200 && r.data._id === alice.user._id);
@@ -70,18 +73,18 @@ r = await alice.req("PUT", "/auth/update-profile", { fullName: "Alice Renamed" }
 log("auth", "update name works", r.status === 200 && r.data.fullName === "Alice Renamed");
 log("auth", "update-profile response does NOT leak password hash", !r.data.password, r.data.password ? `LEAKS bcrypt hash: ${String(r.data.password).slice(0, 15)}…` : "");
 
-r = await alice.req("POST", "/auth/login", { email: alice.email, password: "wrong" });
+r = await alice.req("POST", "/auth/login", { username: alice.username, password: "wrong" });
 log("auth", "wrong password rejected", r.status === 400);
 
 // brute force: 25 rapid attempts, any lockout / 429?
 let locked = false;
-for (let i = 0; i < 25; i++) { const x = await alice.req("POST", "/auth/login", { email: `brute${stamp}@x.com`, password: "guess" + i }); if (x.status === 429) locked = true; }
+for (let i = 0; i < 25; i++) { const x = await alice.req("POST", "/auth/login", { username: `brute${String(stamp).slice(-9)}`, password: "guess" + i }); if (x.status === 429) locked = true; }
 log("auth", "login rate-limiting / lockout after 25 bad attempts", locked, locked ? "" : "no rate limit — password guessing is unlimited");
 
-{ const t = new Client("t"); r = await t.req("POST", "/auth/login", { email: { $ne: null }, password: "secret123" });
+{ const t = new Client("t"); r = await t.req("POST", "/auth/login", { username: { $ne: null }, password: "secret123" });
 log("auth", "login rejects non-string email (NoSQL operator injection)", r.status === 400 && !r.data?._id, r.data?._id ? `logged in as ${r.data.email} using {"email":{"$ne":null}} — operator accepted as the lookup` : `status ${r.status}`); }
 
-r = await alice.req("POST", "/auth/login", { email: alice.email, password: "secret123" });
+r = await alice.req("POST", "/auth/login", { username: alice.username, password: "secret123" });
 const sc = r.headers.get("set-cookie") || "";
 log("auth", "login sets httpOnly cookie", /HttpOnly/i.test(sc));
 log("auth", "cookie SameSite=Strict", /SameSite=Strict/i.test(sc), sc.split(";").slice(1).join(";"));
@@ -92,7 +95,8 @@ r = await alice.req("GET", "/messages/users");
 const sees = r.data || [];
 log("privacy", "Alice sees Bob+Carol in sidebar", sees.some((u) => u._id === bob.user._id));
 log("privacy", "sidebar exposes other users' EMAIL addresses", !sees.some((u) => u.email), sees.length ? `emails visible for ${sees.filter(u=>u.email).length}/${sees.length} users — every stranger is listed with their email` : "");
-log("privacy", "sidebar lists ALL users on the server (no contacts concept)", false, `Alice has added nobody but sees ${sees.length} accounts`);
+log("privacy", "sidebar lists ONLY my contacts, not everyone on the server", sees.length === 2, `Alice has 2 contacts and sees ${sees.length}`);
+log("privacy", "contact list shows usernames", sees.every((u) => !!u.username));
 
 // ───────────────────────── DM ─────────────────────────
 console.log("\n=== DIRECT MESSAGES ===");
@@ -133,7 +137,7 @@ r = await carol.req("GET", `/messages/${alice.user._id}`);
 log("dm", "Carol only sees her own conversation with Alice (empty)", r.data?.length === 0);
 
 r = await alice.req("POST", `/messages/send/000000000000000000000000`, { text: "ghost" });
-log("dm", "sending to non-existent user rejected", r.status === 404 || r.status === 400, `got ${r.status} (message saved to a user that doesn't exist)`);
+log("dm", "sending to non-existent user rejected", r.status === 403 || r.status === 404 || r.status === 400, `got ${r.status}`);
 
 r = await alice.req("POST", `/messages/send/${bob.user._id}`, { text: "" });
 log("dm", "empty message (no text/image/file) rejected", r.status === 400, `got ${r.status}`);
@@ -164,7 +168,7 @@ log("dm", "pagination: ?limit=1 returns 1", r.data?.length === 1);
 // ───────────────────────── SOCKET SPOOFING ─────────────────────────
 console.log("\n=== SOCKET AUTHENTICATION ===");
 const mallory = await mk("Mallory");
-const dave = await mk("Dave"); await dave.connect(); await sleep(200);
+const dave = await mk("Dave"); await befriend(alice, dave); await dave.connect(); await sleep(200);
 const spy = new Client("spy");
 const spyConnected = await spy.connect(dave.user._id); // claiming to be Dave with NO cookie/token
 log("security", "socket without a login cookie is refused", spyConnected === false, spy.connectError || "");
@@ -234,7 +238,10 @@ log("security", "non-member cannot react to a group message", r.status === 403 |
 r = await bob.req("POST", `/groups/${g._id}/members`, { userId: mallory.user._id });
 log("groups", "non-admin cannot add member", r.status === 403);
 r = await alice.req("POST", `/groups/${g._id}/members`, { userId: mallory.user._id });
-log("groups", "admin can add member", r.status === 200);
+log("groups", "admin cannot add someone who is not their contact", r.status === 400, `got ${r.status}`);
+await befriend(alice, mallory);
+r = await alice.req("POST", `/groups/${g._id}/members`, { userId: mallory.user._id });
+log("groups", "admin can add a contact", r.status === 200);
 r = await alice.req("DELETE", `/groups/${g._id}/members/${mallory.user._id}`);
 log("groups", "admin can remove member", r.status === 200);
 r = await bob.req("DELETE", `/groups/${g._id}/members/${carol.user._id}`);
@@ -247,10 +254,11 @@ const st = r.data;
 log("status", "post text status", r.status === 201);
 r = await bob.req("POST", `/status/view/${st._id}`);
 log("status", "mark viewed", r.status === 200);
-r = await mallory.req("GET", "/status");
+const outsider = await mk("Outsider");
+r = await outsider.req("GET", "/status");
 const mseen = (r.data || []).find((s) => s._id === st._id);
-log("privacy", "a stranger (not Alice's contact) cannot see Alice's status", !mseen, mseen ? "Mallory sees it — status goes to EVERY user on the server" : "");
-log("privacy", "viewedBy list hidden from non-owners", !(mseen?.viewedBy?.length), mseen?.viewedBy?.length ? `Mallory can see who viewed Alice's status (${mseen.viewedBy.length} viewer id(s))` : "");
+log("privacy", "a stranger (not Alice's contact) cannot see Alice's status", !mseen, mseen ? "an outsider sees it" : "");
+log("privacy", "viewedBy list hidden from non-owners", !(mseen?.viewedBy?.length), mseen?.viewedBy?.length ? `outsider can see the viewer list (${mseen.viewedBy.length})` : "");
 r = await bob.req("DELETE", `/status/${st._id}`);
 log("status", "non-owner cannot delete someone's status", r.status === 404 || r.status === 403);
 r = await alice.req("DELETE", `/status/${st._id}`);
@@ -276,7 +284,7 @@ log("calls", "calling offline user → call:unavailable", alice.got("call:unavai
 
 // ───────────────────────── MULTI-TAB ─────────────────────────
 console.log("\n=== PRESENCE / MULTI-DEVICE ===");
-const erin = await mk("Erin"); const watcher = await mk("Watcher");
+const erin = await mk("Erin"); const watcher = await mk("Watcher"); await befriend(watcher, erin);
 await erin.connect(); await watcher.connect(); await sleep(200);
 const erinTab2 = new Client("erintab2"); erinTab2.user = erin.user; await erinTab2.connect(); await sleep(200);
 erinTab2.sock.disconnect(); await sleep(400);
@@ -320,7 +328,7 @@ log("validation", "status colour must be a hex value", r.status === 400);
 
 // login rate limit
 const rl = new Client("rl"); let limited = false;
-for (let i = 0; i < 14; i++) { const x = await rl.req("POST", "/auth/login", { email: "nobody@x.com", password: "nope" + i }); if (x.status === 429) limited = true; }
+for (let i = 0; i < 14; i++) { const x = await rl.req("POST", "/auth/login", { username: "nobody_x", password: "nope" + i }); if (x.status === 429) limited = true; }
 log("auth", "login is rate limited after repeated failures", limited);
 
 // group membership removal revokes live access
@@ -335,6 +343,181 @@ bob.clear(); await alice.req("POST", `/groups/${gy._id}/messages`, { text: "ping
 log("groups", "member receives live group message without opening the group", bob.got("newGroupMessage").length === 1);
 r = await alice.req("GET", `/groups`);
 log("groups", "group payload no longer exposes member emails", !r.data.some((g) => g.members.some((m) => m.email)));
+
+
+// ───────────────────────── PHASE 1: USERNAMES / CONTACTS / BLOCK / PRIVACY ─────────────────────────
+console.log("\n=== PHASE 1: USERNAMES, CONTACTS, BLOCKING, PRIVACY ===");
+const anon = new Client("anon2");
+for (const [u, why] of [["ab", "too short"], ["1abcdef", "starts with digit"], ["bad name", "space"], ["a".repeat(21), "too long"], ["admin", "reserved"], ["héllo", "non-ascii"]]) {
+  r = await anon.req("POST", "/auth/signup", { username: u, password: "secret123" });
+  log("username", `signup rejects username (${why})`, r.status === 400, r.data?.message?.slice(0, 50));
+}
+r = await anon.req("GET", `/auth/username-available?username=${alice.username}`);
+log("username", "availability check says taken for an existing username", r.data?.available === false);
+r = await anon.req("GET", `/auth/username-available?username=free${String(stamp).slice(-9)}`);
+log("username", "availability check says free for an unused username", r.data?.available === true);
+r = await alice.req("PUT", "/auth/username", { username: bob.username });
+log("username", "can't rename to a taken username", r.status === 400);
+const newName = `ali${String(stamp).slice(-9)}x`;
+r = await alice.req("PUT", "/auth/username", { username: newName });
+log("username", "can change own username", r.status === 200 && r.data.username === newName);
+alice.username = newName;
+log("username", "signup response/user object has no password hash", !r.data.password);
+
+// search
+const dana = await mk("Dana"), eli = await mk("Eli"), fay = await mk("Fay");
+r = await dana.req("GET", `/contacts/search?username=${eli.username}`);
+log("contacts", "exact username search finds the person (relation none)", r.status === 200 && r.data._id === eli.user._id && r.data.relation === "none");
+r = await dana.req("GET", `/contacts/search?username=@${eli.username.toUpperCase()}`);
+log("contacts", "search ignores @ and case", r.status === 200);
+r = await dana.req("GET", `/contacts/search?username=${eli.username.slice(0, 6)}`);
+log("contacts", "partial username finds nobody (no browsing/scraping)", r.status === 404);
+r = await dana.req("GET", `/contacts/search?username=${dana.username}`);
+log("contacts", "searching yourself finds nothing", r.status === 404);
+r = await dana.req("GET", "/contacts/search?username=");
+log("contacts", "empty search → 400", r.status === 400);
+log("contacts", "search result exposes no email/password", !("email" in (await dana.req("GET", `/contacts/search?username=${eli.username}`)).data) );
+
+// strangers can't do anything yet
+r = await dana.req("POST", `/messages/send/${eli.user._id}`, { text: "hi stranger" });
+log("contacts", "non-contact cannot send a message", r.status === 403, `got ${r.status}`);
+await dana.connect(); await eli.connect(); await sleep(200);
+eli.clear(); dana.clear();
+dana.sock.emit("call:offer", { to: eli.user._id, offer: { type: "offer", sdp: "x" }, callType: "voice" }); await sleep(250);
+log("contacts", "non-contact cannot ring you (call:offer refused)", eli.got("call:incoming").length === 0 && dana.got("call:unavailable").length === 1);
+dana.sock.emit("typing", { receiverId: eli.user._id }); await sleep(250);
+log("contacts", "non-contact typing events are not delivered", eli.got("userTyping").length === 0);
+log("contacts", "non-contacts are not shown as online to each other", !(dana.got("getOnlineUsers").at(-1)?.payload || []).includes(eli.user._id));
+r = await eli.req("GET", "/messages/users");
+log("contacts", "a new account's contact list is empty", r.data.length === 0);
+
+// request → accept
+eli.clear();
+r = await dana.req("POST", `/contacts/request/${eli.user._id}`);
+await sleep(250);
+log("contacts", "send contact request", r.status === 201 && r.data.status === "pending");
+log("contacts", "recipient is notified in realtime", eli.got("contactsChanged").some((e) => e.payload.type === "request" && e.payload.user.username === dana.username));
+r = await eli.req("GET", "/contacts");
+log("contacts", "recipient sees it under incoming", r.data.incoming.some((u) => u._id === dana.user._id));
+r = await dana.req("GET", "/contacts");
+log("contacts", "sender sees it under outgoing", r.data.outgoing.some((u) => u._id === eli.user._id));
+r = await dana.req("GET", `/contacts/search?username=${eli.username}`);
+log("contacts", "search shows pending_out", r.data.relation === "pending_out");
+r = await dana.req("POST", `/messages/send/${eli.user._id}`, { text: "still pending" });
+log("contacts", "pending request does not allow messaging", r.status === 403);
+r = await dana.req("POST", `/contacts/accept/${eli.user._id}`);
+log("contacts", "requester cannot accept their own request", r.status === 404);
+r = await dana.req("POST", `/contacts/request/${eli.user._id}`);
+log("contacts", "duplicate request is idempotent", r.status === 200 && r.data.status === "pending");
+dana.clear();
+r = await eli.req("POST", `/contacts/accept/${dana.user._id}`);
+await sleep(300);
+log("contacts", "recipient accepts", r.status === 200);
+log("contacts", "requester is notified of acceptance", dana.got("contactsChanged").some((e) => e.payload.type === "accepted"));
+r = await dana.req("POST", `/messages/send/${eli.user._id}`, { text: "now we can talk" });
+log("contacts", "contacts can message each other", r.status === 201);
+r = await eli.req("GET", "/messages/users");
+log("contacts", "each now appears in the other's contact list", r.data.some((u) => u._id === dana.user._id));
+log("presence", "contacts see each other online", (dana.got("getOnlineUsers").at(-1)?.payload || []).includes(eli.user._id));
+r = await dana.req("POST", `/contacts/request/${eli.user._id}`);
+log("contacts", "requesting an existing contact → 400", r.status === 400);
+const stranger3 = await mk("Gus");
+r = await stranger3.req("GET", `/messages/${dana.user._id}`);
+log("privacy", "non-contact reading history with someone sees nothing", r.status === 200 && r.data.length === 0);
+
+// mutual request auto-accepts
+r = await dana.req("POST", `/contacts/request/${fay.user._id}`);
+r = await fay.req("POST", `/contacts/request/${dana.user._id}`);
+log("contacts", "both asking each other becomes a contact straight away", r.status === 200 && r.data.status === "accepted");
+
+// decline / remove
+const hal = await mk("Hal");
+await hal.req("POST", `/contacts/request/${dana.user._id}`);
+r = await dana.req("DELETE", `/contacts/${hal.user._id}`);
+log("contacts", "recipient can decline a request", r.status === 200);
+r = await hal.req("POST", `/messages/send/${dana.user._id}`, { text: "x" });
+log("contacts", "declined requester still cannot message", r.status === 403);
+r = await dana.req("DELETE", `/contacts/${fay.user._id}`);
+log("contacts", "contact can be removed", r.status === 200);
+r = await fay.req("POST", `/messages/send/${dana.user._id}`, { text: "x" });
+log("contacts", "removed contact can no longer message", r.status === 403);
+r = await dana.req("DELETE", `/contacts/${stranger3.user._id}`);
+log("contacts", "removing a non-relationship → 404", r.status === 404);
+
+// block
+const ivy = await mk("Ivy");
+await befriend(dana, ivy); await ivy.connect(); await sleep(200);
+r = await dana.req("POST", `/contacts/block/${ivy.user._id}`);
+log("block", "block a contact", r.status === 200);
+r = await ivy.req("POST", `/messages/send/${dana.user._id}`, { text: "unblock me" });
+log("block", "blocked person cannot message", r.status === 403);
+r = await dana.req("POST", `/messages/send/${ivy.user._id}`, { text: "x" });
+log("block", "blocking also stops me messaging them", r.status === 403);
+r = await ivy.req("GET", `/contacts/search?username=${dana.username}`);
+log("block", "blocked person can't find me by username", r.status === 404);
+r = await ivy.req("POST", `/contacts/request/${dana.user._id}`);
+log("block", "blocked person's request looks successful (block stays invisible)", r.status === 200);
+r = await dana.req("GET", "/contacts");
+log("block", "...but nothing reaches my incoming list", !r.data.incoming.some((u) => u._id === ivy.user._id));
+log("block", "blocked list shows who I blocked", r.data.blocked.some((u) => u._id === ivy.user._id));
+r = await dana.req("POST", `/contacts/request/${ivy.user._id}`);
+log("block", "I must unblock before requesting them", r.status === 400);
+r = await dana.req("GET", `/contacts/search?username=${ivy.username}`);
+log("block", "search shows relation=blocked for the person I blocked", r.data.relation === "blocked");
+r = await dana.req("POST", `/contacts/block/${dana.user._id}`);
+log("block", "can't block yourself", r.status === 400);
+r = await dana.req("DELETE", `/contacts/block/${ivy.user._id}`);
+log("block", "unblock", r.status === 200);
+r = await ivy.req("GET", `/contacts/search?username=${dana.username}`);
+log("block", "after unblock they can find me again, but are not contacts", r.status === 200 && r.data.relation === "none");
+
+// groups: only contacts
+const gg = (await dana.req("POST", "/groups", { name: "FriendsOnly", memberIds: [eli.user._id, stranger3.user._id] }));
+log("groups", "can't create a group with someone who isn't my contact", gg.status === 400, gg.data?.message);
+const g2 = (await dana.req("POST", "/groups", { name: "Friends", memberIds: [eli.user._id] }));
+log("groups", "can create a group with contacts", g2.status === 201);
+r = await dana.req("POST", `/groups/${g2.data._id}/members`, { userId: stranger3.user._id });
+log("groups", "can't add a non-contact to an existing group", r.status === 400);
+log("groups", "group payload carries usernames, no emails", g2.data.members.every((m) => m.username && !m.email));
+
+// privacy: online, status audience, read receipts
+r = await eli.req("PUT", "/auth/privacy", { showOnline: "maybe" });
+log("privacy", "invalid privacy value rejected", r.status === 400);
+dana.clear();
+r = await eli.req("PUT", "/auth/privacy", { showOnline: false });
+await sleep(400);
+log("privacy", "can switch 'show online' off", r.status === 200 && r.data.privacy.showOnline === false);
+log("privacy", "contacts stop seeing me online when I switch it off", !(dana.got("getOnlineUsers").at(-1)?.payload || []).includes(eli.user._id));
+await eli.req("PUT", "/auth/privacy", { showOnline: true }); await sleep(300);
+log("privacy", "...and see me again when switched back on", (dana.got("getOnlineUsers").at(-1)?.payload || []).includes(eli.user._id));
+
+await eli.req("PUT", "/auth/privacy", { statusAudience: "nobody" });
+const stE = (await eli.req("POST", "/status", { text: "private-ish" })).data;
+r = await dana.req("GET", "/status");
+log("privacy", "status audience 'nobody' hides my status from contacts", !r.data.some((x) => x._id === stE._id));
+r = await eli.req("GET", "/status");
+log("privacy", "...but I still see my own", r.data.some((x) => x._id === stE._id));
+await eli.req("PUT", "/auth/privacy", { statusAudience: "contacts" });
+r = await dana.req("GET", "/status");
+log("privacy", "status audience 'contacts' shows it to contacts", r.data.some((x) => x._id === stE._id));
+
+// read receipts (reciprocal)
+dana.clear();
+await dana.req("POST", `/messages/send/${eli.user._id}`, { text: "receipt check 1" });
+await eli.req("PUT", `/messages/read/${dana.user._id}`); await sleep(300);
+log("privacy", "read receipts ON: sender is told when read", dana.got("messagesRead").length === 1);
+await eli.req("PUT", "/auth/privacy", { readReceipts: false });
+dana.clear();
+await dana.req("POST", `/messages/send/${eli.user._id}`, { text: "receipt check 2" });
+await eli.req("PUT", `/messages/read/${dana.user._id}`); await sleep(300);
+log("privacy", "read receipts OFF: sender is NOT told", dana.got("messagesRead").length === 0);
+r = await dana.req("GET", `/messages/${eli.user._id}`);
+log("privacy", "...and history doesn't reveal 'read' either", r.data.filter((m) => m.senderId === dana.user._id).every((m) => m.isRead === false));
+await eli.req("PUT", "/auth/privacy", { readReceipts: true });
+
+// legacy-style login by email still possible only for accounts that have an email; unknown email fails cleanly
+r = await new Client("l").req("POST", "/auth/login", { email: "nobody@example.com", password: "secret123" });
+log("auth", "login with an unknown email fails cleanly (400, no crash)", r.status === 400);
 
 // ───────────────────────── SUMMARY ─────────────────────────
 const fails = results.filter((x) => !x.pass);

@@ -1,11 +1,19 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useChatStore } from "../store/useChatStore";
 import { useAuthStore } from "../store/useAuthStore";
 import { useGroupStore } from "../store/useGroupStore";
 import {
-  Image, Send, Smile, X, FileText, Film, CornerUpLeft, Paperclip,
+  Image, Send, Smile, X, FileText, Film, CornerUpLeft, Paperclip, Mic, Trash2,
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { useVoiceRecorder, blobToDataUrl } from "../lib/useVoiceRecorder";
+import { formatDuration } from "../lib/utils";
+import { useOutboxStore } from "../store/useOutboxStore";
+import { useDraftStore } from "../store/useDraftStore";
+import { OnceIcon } from "./ViewOnceBubble";
+
+// Drafts are kept per chat. The parents give this component a `key`, so it remounts (and reloads its draft) when the chat changes.
+const draftKeyFor = (store, groupId) => (store === "dm" ? `dm:${useChatStore.getState().selectedUser?._id}` : `group:${groupId}`);
 
 const EMOJI_CATEGORIES = {
   "😀": [
@@ -77,12 +85,15 @@ const FilePreview = ({ fileType, fileName, fileSize }) => {
 };
 
 const MessageInput = ({ store = "dm", groupId = null }) => {
-  const [text, setText] = useState("");
+  const chatKey = draftKeyFor(store, groupId);
+  const [text, setText] = useState(() => useDraftStore.getState().drafts[chatKey]?.text || "");
   const [imagePreview, setImagePreview] = useState(null);
   const [fileData, setFileData] = useState(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [activeCategory, setActiveCategory] = useState("😀");
   const [emojiSearch, setEmojiSearch] = useState("");
+  const [viewOnce, setViewOnce] = useState(false);   // the attached photo / video is sent as view-once
+  const [voiceOnce, setVoiceOnce] = useState(false); // the voice note being recorded is sent as view-once
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
@@ -91,6 +102,59 @@ const MessageInput = ({ store = "dm", groupId = null }) => {
   // FIX: use static import — require() does not exist in ESM/Vite
   const groupStore = useGroupStore();
   const { replyingTo, clearReplyingTo } = store === "dm" ? chatStore : groupStore;
+
+  // View-once is offered for exactly one photo or video, with no caption and no reply (the server enforces the same rules)
+  const canViewOnce = !text.trim() && !replyingTo && !!imagePreview !== !!fileData && (!!imagePreview || fileData?.type === "video");
+  const sendViewOnce = viewOnce && canViewOnce;
+  useEffect(() => { if (!canViewOnce) setViewOnce(false); }, [canViewOnce]); // the toggle never carries over to the next attachment
+
+  // ── Drafts: save what's typed (shortly after typing stops, and when leaving the chat) ──
+  const textRef = useRef(text);
+  useEffect(() => {
+    textRef.current = text;
+    const t = setTimeout(() => useDraftStore.getState().setDraft(chatKey, text), 400);
+    return () => clearTimeout(t);
+  }, [text, chatKey]);
+  useEffect(() => () => useDraftStore.getState().setDraft(chatKey, textRef.current), [chatKey]);
+
+  // Hands a message to the send queue: it appears in the chat at once and is sent (and retried if the network drops) from there
+  const queueMessage = (data) =>
+    useOutboxStore.getState().enqueue(
+      store === "dm"
+        ? { kind: "dm", targetId: chatStore.selectedUser?._id, data }
+        : { kind: "group", targetId: groupId, data }
+    );
+
+  // ── Voice notes ──
+  const sendVoiceRef = useRef(null);
+  const sendingVoice = useRef(false);
+  const voice = useVoiceRecorder({ onLimit: () => sendVoiceRef.current?.() });
+
+  const startVoice = async () => {
+    try {
+      await voice.start();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
+  const sendVoice = async () => {
+    if (sendingVoice.current) return;
+    sendingVoice.current = true;
+    try {
+      const rec = await voice.finish();
+      if (!rec) return;
+      const dataUrl = await blobToDataUrl(rec.blob).catch(() => null);
+      if (!dataUrl) return toast.error("Couldn't read the recording");
+      const payload = { text: "", fileUrl: dataUrl, fileName: "Voice message", voice: true, voiceDuration: rec.seconds, fileType: "audio", fileSize: rec.blob.size, viewOnce: voiceOnce && !replyingTo ? true : undefined };
+      // The queue keeps the recording until it is delivered, so there is nothing to put back if the network is down
+      queueMessage(payload);
+      setVoiceOnce(false);
+    } finally {
+      sendingVoice.current = false;
+    }
+  };
+  useEffect(() => { sendVoiceRef.current = sendVoice; });
 
   const emitTyping = () => {
     const socket = useAuthStore.getState().socket;
@@ -157,27 +221,30 @@ const MessageInput = ({ store = "dm", groupId = null }) => {
     setShowEmojiPicker(false);
 
     try {
-      const payload = {
+      const queued = queueMessage({
         text: text.trim(),
         image: imagePreview,
-        fileUrl:   fileData?.base64 || null,
-        fileName:  fileData?.name   || null,
-      };
+        fileUrl: fileData?.base64 || null,
+        fileName: fileData?.name || null,
+        voice: fileData?.voice || undefined,
+        voiceDuration: fileData?.voiceDuration,
+        fileType: fileData?.type,
+        fileSize: fileData?.size,
+        viewOnce: sendViewOnce || undefined,
+      });
 
-      const ok = store === "dm"
-        ? await chatStore.sendMessage(payload)
-        : await useGroupStore.getState().sendGroupMessage(groupId, payload);
-
-      // keep what the user typed if the send failed, so nothing is lost
-      if (ok) {
+      // Only clear the box once the queue has accepted the message, so nothing typed is lost
+      if (queued) {
         setText("");
+        useDraftStore.getState().setDraft(chatKey, "");
+        setViewOnce(false);
         setImagePreview(null);
         setFileData(null);
         if (imageInputRef.current) imageInputRef.current.value = "";
         if (fileInputRef.current)  fileInputRef.current.value  = "";
       }
     } catch (error) {
-      console.error("Failed to send message:", error);
+      console.error("Failed to queue message:", error);
     }
   };
 
@@ -269,7 +336,38 @@ const MessageInput = ({ store = "dm", groupId = null }) => {
         </div>
       )}
 
-      <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+      {canViewOnce && (
+        <button type="button" onClick={() => setViewOnce((v) => !v)} aria-pressed={viewOnce}
+          title="They can open it once; it is then deleted from the server"
+          className={`btn btn-xs gap-1.5 mb-2 rounded-full ${viewOnce ? "btn-primary" : "btn-ghost border border-base-300"}`}>
+          <OnceIcon className="size-4 text-[10px]" /> View once
+        </button>
+      )}
+
+      {/* Voice recording bar (replaces the text box while recording) */}
+      {voice.recording && (
+        <div className="flex items-center gap-3 px-1" role="status">
+          <button type="button" className="btn btn-circle btn-sm btn-ghost text-error" onClick={() => { setVoiceOnce(false); voice.cancel(); }} title="Discard" aria-label="Discard recording">
+            <Trash2 size={18} />
+          </button>
+          <div className="flex-1 flex items-center gap-2">
+            <span className="size-2.5 rounded-full bg-error animate-pulse" />
+            <span className="font-mono text-sm">{formatDuration(voice.seconds)}</span>
+            <span className="text-xs text-base-content/50">Recording…</span>
+          </div>
+          {!replyingTo && (
+            <button type="button" onClick={() => setVoiceOnce((v) => !v)} aria-pressed={voiceOnce} title="View once" aria-label="View once"
+              className={`btn btn-circle btn-sm ${voiceOnce ? "btn-primary" : "btn-ghost"}`}>
+              <OnceIcon className="size-5 text-xs" />
+            </button>
+          )}
+          <button type="button" className="btn btn-circle btn-sm btn-primary" onClick={sendVoice} title="Send voice message" aria-label="Send voice message">
+            <Send size={18} />
+          </button>
+        </div>
+      )}
+
+      <form onSubmit={handleSendMessage} className={`items-center gap-2 ${voice.recording ? "hidden" : "flex"}`}>
         {/* Emoji */}
         <button type="button"
           className={`btn btn-circle btn-sm btn-ghost ${showEmojiPicker ? "text-primary" : "text-base-content/60"}`}
@@ -309,11 +407,16 @@ const MessageInput = ({ store = "dm", groupId = null }) => {
           <Paperclip size={18} />
         </button>
 
-        {/* Send */}
-        <button type="submit" className="btn btn-circle btn-sm btn-primary"
-          disabled={!text.trim() && !imagePreview && !fileData}>
-          <Send size={18} />
-        </button>
+        {/* Send, or the microphone when there is nothing to send */}
+        {text.trim() || imagePreview || fileData ? (
+          <button type="submit" className="btn btn-circle btn-sm btn-primary">
+            <Send size={18} />
+          </button>
+        ) : (
+          <button type="button" onClick={startVoice} className="btn btn-circle btn-sm btn-primary" title="Record a voice message" aria-label="Record a voice message">
+            <Mic size={18} />
+          </button>
+        )}
       </form>
     </div>
   );

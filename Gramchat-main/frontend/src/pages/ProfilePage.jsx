@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useAuthStore } from "../store/useAuthStore";
-import { Camera, Check, Mail, Pencil, User, X } from "lucide-react";
+import { AtSign, Camera, Check, Pencil, User, X } from "lucide-react";
 
 const ProfilePage = () => {
-  const { authUser, isUpdatingProfile, updateProfile } = useAuthStore();
+  const { authUser, isUpdatingProfile, updateProfile, updateUsername } = useAuthStore();
+  const [editingUsername, setEditingUsername] = useState(false);
+  const [newUsername, setNewUsername] = useState(authUser?.username || "");
   const [selectedImg, setSelectedImg] = useState(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [newFullName, setNewFullName] = useState(authUser?.fullName || "");
@@ -121,15 +123,33 @@ const ProfilePage = () => {
               )}
             </div>
 
-            {/* Email — read only */}
+            {/* Username: this is how friends find you */}
             <div className="space-y-1.5">
               <div className="text-sm text-zinc-400 flex items-center gap-2">
-                <Mail className="w-4 h-4" />
-                Email Address
+                <AtSign className="w-4 h-4" />
+                Username
               </div>
-              <p className="px-4 py-2.5 bg-base-200 rounded-lg border text-base-content/70">
-                {authUser?.email}
-              </p>
+              {editingUsername ? (
+                <div className="flex gap-2">
+                  <input
+                    autoFocus
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    className="input input-bordered flex-1"
+                    value={newUsername}
+                    maxLength={21}
+                    onChange={(e) => setNewUsername(e.target.value)}
+                  />
+                  <button className="btn btn-primary" onClick={async () => { if (await updateUsername(newUsername)) setEditingUsername(false); }}>Save</button>
+                  <button className="btn btn-ghost" onClick={() => { setEditingUsername(false); setNewUsername(authUser?.username || ""); }}>Cancel</button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between px-4 py-2.5 bg-base-200 rounded-lg border">
+                  <p className="text-base-content/80">@{authUser?.username}</p>
+                  <button className="btn btn-ghost btn-xs" onClick={() => setEditingUsername(true)}>Change</button>
+                </div>
+              )}
+              <p className="text-xs text-base-content/50">Share this with friends so they can add you.</p>
             </div>
           </div>
 

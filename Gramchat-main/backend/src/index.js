@@ -12,6 +12,12 @@ import groupRoutes from "./routes/group.route.js";
 import statusRoutes from "./routes/status.route.js";
 import uploadRoutes from "./routes/upload.route.js";
 import callRoutes from "./routes/call.route.js";
+import contactRoutes from "./routes/contact.route.js";
+import pushRoutes from "./routes/push.route.js";
+import chatRoutes from "./routes/chat.route.js";
+import { initPush } from "./lib/push.js";
+import { startSweeper } from "./lib/disappearing.js";
+import { runMigrations } from "./lib/migrate.js";
 import { app, server } from "./lib/socket.js";
 import { getClientOrigins, getPort, validateRequiredEnv } from "./lib/config.js";
 
@@ -46,6 +52,9 @@ app.use("/api/groups", groupRoutes);
 app.use("/api/status", statusRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/calls", callRoutes);
+app.use("/api/contacts", contactRoutes);
+app.use("/api/push", pushRoutes);
+app.use("/api/chats", chatRoutes);
 
 app.get("/api/health", (_req, res) => res.status(200).json({ status: "ok" }));
 app.use("/api", (_req, res) => res.status(404).json({ message: "Not found" }));
@@ -64,4 +73,7 @@ app.use((err, _req, res, _next) => {
 });
 
 await connectDB();
+await runMigrations();
+await initPush();
 server.listen(PORT, () => console.log("server is running on PORT:" + PORT));
+startSweeper(); // deletes disappeared messages and view-once media that is past its time

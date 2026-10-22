@@ -31,9 +31,9 @@ Closing that first gap is the single most important engineering goal.
 
 ## 2. Where we are (after the Oct 2026 hardening, see `docs/AUDIT.md`)
 
-Working and tested: email accounts, realtime 1:1 chat, read receipts, replies, reactions, in-chat search, groups with an admin, status/stories (24 h), voice & video calls (WebRTC, STUN), installable PWA, light/dark + 30 themes, unread badges and previews, local file storage, server-side authentication of sockets and groups.
+Working and tested: username accounts, contacts with requests and blocking, privacy settings (online, read receipts, status audience), realtime 1:1 chat, read receipts, replies, reactions, in-chat search, groups with an admin, status/stories (24 h), voice & video calls (WebRTC, STUN), installable PWA, light/dark + 30 themes, unread badges and previews, local file storage, server-side authentication of sockets and groups.
 
-Known gaps: global user directory (no contacts), no E2EE, no push notifications, no TURN by default, single-process server, MongoDB required.
+Known gaps: no E2EE, no push notifications, no TURN by default, single-process server, MongoDB required.
 
 ---
 
@@ -44,24 +44,24 @@ WhatsApp column reflects Meta's announcements and coverage through mid-2026 (off
 | Capability | WhatsApp | Gramchat today | Phase |
 |---|---|---|---|
 | **Identity** | | | |
-| Sign up without a phone number (usernames) | Rolling out 2026 | Email + password | 1 |
-| Contacts / invite-only discovery | Address book | ❌ everyone is listed | 1 |
-| Block, report, mute, archive, pin chats | ✅ | ❌ | 1–2 |
-| Privacy controls (last seen, photo, status, who can add me to groups) | ✅ | ❌ | 1 |
+| Sign up without a phone number (usernames) | Rolling out 2026 | ✅ usernames (phone numbers optional later) | done |
+| Contacts / invite-only discovery | Address book | ✅ exact-username search + requests | done |
+| Block, report, mute, archive, pin chats | ✅ | block done; mute / archive / pin chats built (2D); report not yet | 1.5–2 |
+| Privacy controls (last seen, photo, status, who can add me to groups) | ✅ | online, read receipts, status audience done; photo / last seen / group-add not yet | 1.5 |
 | Passkeys / 2-step verification | ✅ | ❌ | 1 |
 | **Messaging** | | | |
 | Text, emoji, replies, reactions | ✅ | ✅ | done |
-| Sent / delivered / read ticks | ✅ | sent / read | 2 |
-| Edit message, delete for me / for everyone | ✅ | ❌ | 2 |
-| Forward, star, pin messages | ✅ | ❌ | 2 |
-| Voice notes (+ transcripts) | ✅ | ❌ (can attach audio files) | 2 |
+| Sent / delivered / read ticks | ✅ | ✅ in 1:1 chats (groups: no per-member ticks yet) | done (2A) |
+| Edit message, delete for me / for everyone | ✅ | ✅ edit 15 min, delete-for-everyone 48 h | done (2A) |
+| Forward, star, pin messages | ✅ | ✅ forward to ≤5 chats, private stars + list, ≤3 pins per chat | done (2A) |
+| Voice notes (+ transcripts) | ✅ | ✅ voice notes built (2B); transcripts not | done (2B) |
 | Photos, video, documents | ✅ | ✅ (20 MB cap) | done |
 | HD media, captions, image editing | ✅ | ❌ | 2 |
-| Link previews | ✅ | ❌ | 2 (client-side or SSRF-safe proxy) |
-| Disappearing messages (24 h / 7 d / 90 d), view-once, "Keep" | ✅ | ❌ | 2 |
+| Link previews | ✅ | ✅ built (2D): server-side, SSRF-guarded | done (2D) |
+| Disappearing messages (24 h / 7 d / 90 d), view-once, "Keep" | ✅ | ✅ built (2E): 24 h / 7 d / 90 d and view-once photo / video / voice; no "Keep" yet | done (2E) |
 | Polls, @mentions, scheduled events | ✅ | ❌ | 2–5 |
-| Search across all chats, media gallery | ✅ | per-chat only | 2 |
-| Drafts, offline queue + retry | ✅ | ❌ | 2 |
+| Search across all chats, media gallery | ✅ | ✅ built (2D): chat-list search + Media / Docs / Links gallery | done (2D) |
+| Drafts, offline queue + retry | ✅ | ✅ built (2C): queue survives reloads, no duplicates | done (2C) |
 | Locked / hidden chats | ✅ | ❌ | 2 |
 | **Encryption & safety** | | | |
 | End-to-end encryption by default | ✅ Signal protocol | ❌ | **3** |
@@ -81,7 +81,7 @@ WhatsApp column reflects Meta's announcements and coverage through mid-2026 (off
 | **Platform** | | | |
 | Web, desktop, mobile apps | ✅ | PWA | 4–6 |
 | Multi-device (up to 4 linked) | ✅ | multi-tab works | 3 (needs E2EE design) |
-| Push notifications | ✅ | ❌ (tab title only) | 2 |
+| Push notifications | ✅ | ✅ built (2B), needs https | done (2B) |
 | Multiple accounts on one device | ✅ (2026) | ❌ | 6 |
 | Chat transfer between phones, storage manager | ✅ (2026) | ❌ | 6 |
 | **AI** | Meta AI: writing help, photo touch-up, imagine† | none, by design | optional, on-device only |
@@ -95,7 +95,11 @@ Deliberately **not** copied: ads in Status, promoted channels, AI features that 
 ### Phase 0: Make it safe and honest ✅ done
 Authenticated sockets, authorised reactions/groups, scoped statuses, no emails exposed, local media, rate limits, validation, race-condition and presence fixes, working themes, reliable install. See `docs/AUDIT.md`.
 
-### Phase 1: Identity and contacts (next)
+### Phase 1: Identity and contacts ✅ core done (Oct 2026)
+**Shipped:** usernames, exact-username search, contact requests (accept / decline / cancel / remove), blocking (invisible to the blocked person), contacts-only messaging, calls, typing, groups and status, presence limited to contacts, privacy settings (show online, read receipts, status audience), automatic migration of existing accounts and conversations. Tests: 156 API checks + 27 browser checks.
+**Still open (Phase 1.5):** account recovery, session list / log out other devices, passkeys, report user, mute / archive / pin, profile-photo and last-seen privacy, retiring the legacy email login.
+
+Original plan, for reference:
 - Usernames (unique, case-insensitive) as the public identity; email optional (recovery only) *(depends on decision A below)*.
 - Contacts model: you only see people you added or who you accepted; invite by username / link / QR. Remove the global directory.
 - Block, report, mute; privacy settings (who sees photo, status, online/last seen); per-account contact-request limits.
@@ -103,6 +107,14 @@ Authenticated sockets, authorised reactions/groups, scoped statuses, no emails e
 - **Acceptance:** a new account sees nobody; B can't discover or message A until A accepts; blocked users can't message/call/see status; statuses/online state follow privacy settings; both currently-expected test failures flip to pass.
 
 ### Phase 2: Messaging parity
+**2A ✅ built (Oct 2026), awaiting your test run:** delivered ticks, edit, delete for me / for everyone, forward, star (+ Starred list), pin (≤3 per chat). API checks: `npm run test:api:2a`. Not yet browser-tested.
+**2B ✅ built (Oct 2026), awaiting your test run:** voice notes and push notifications. API checks: `npm run test:api:2b`. Needs `npm run setup` once (new `web-push` package) and the https link (`npm run share`) to try on a phone.
+**2E ✅ built (Oct 2026), awaiting your test run:** disappearing messages (24 h / 7 d / 90 d per chat; admin-only in groups) and view-once photos, videos and voice notes. API checks: `npm run test:api:2e` (two modes, see `tests/README.md`). Not yet run or browser-tested; a screenshot can't be prevented (see the changelog).
+**Still open in Phase 2:** HD media / captions / image editing, locked chats, group per-member ticks, voice transcripts, "Keep" for disappearing messages.
+**2D ✅ built (Oct 2026), awaiting your test run:** link previews (server-side, SSRF-guarded), cross-chat search, media / docs / links gallery, pin (≤3) / archive / mute for chats. API checks: `npm run test:api:2d` (two modes, see `tests/README.md`). Not yet browser-tested.
+**2C ✅ built (Oct 2026), awaiting your test run:** drafts, offline send queue with retry (no duplicates: idempotent `clientId`), infinite scroll (also jumps to old pins). API checks: `npm run test:api:2c`. Not yet browser-tested.
+
+Full Phase 2 scope:
 Delivered ticks, edit, delete (me/everyone), forward, star, pin, voice notes, link previews, disappearing + view-once, drafts, offline queue, cross-chat search, media gallery, archive/pin chats, infinite scroll (API already paginates), **web push** (needs a VAPID key pair and a service-worker push handler; iOS requires the app installed to the home screen: verify against current Apple docs before promising it).
 - **Acceptance:** every item has an API test and a browser test; killing the network mid-send queues and retries without duplicates; push arrives with the tab closed on Android Chrome.
 
@@ -140,10 +152,10 @@ Multiple admins/roles, invite links, join approval, member tags, event reminders
 5. Update `docs/AUDIT.md` with anything found.
 
 ## 6. Open decisions (need the owner's answer)
-- **A. Identity:** usernames only (recommended: free, private) vs phone numbers (SMS costs money and links identity to phone).
-- **B. Privacy depth:** go straight to E2EE (Phase 3 first), or finish contacts/messaging parity first? E2EE changes how search, media, groups and multi-device work, so earlier is cheaper than later.
-- **C. Compatibility:** may we make breaking changes to the data model, or must it stay mergeable with the original repo?
-- **D. First deployment:** who connects remotely, on what device, and is your PC acceptable as the server for now?
+- **A. Identity: decided.** Usernames first; phone numbers later as an optional extra.
+- **B. Order: decided.** Core functionality first, encryption after (owner's words: "do all functionalities before features"). Keep the message format ready for ciphertext so it isn't a rewrite.
+- **C. Compatibility:** assumed free to change (the project is the owner's). Confirm if it must stay mergeable with the original repo.
+- **D. First deployment:** laptop as the server, phone on the same router (`npm run share -- --lan`).
 - **E. Database:** keep MongoDB (needs install) or move to an embedded database for one-click setup?
 
 ## 7. What's verified vs assumed (as of Oct 2026)

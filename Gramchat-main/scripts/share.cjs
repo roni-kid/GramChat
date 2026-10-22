@@ -53,8 +53,15 @@ const PORT = (envText.match(/^PORT=(\d+)/m) || [])[1] || "5001";
 
 // 3. frontend build
 const dist = path.join(frontendDir, "dist", "index.html");
-if (args.has("--build") || !fs.existsSync(dist)) {
-  say("Building the frontend…");
+// rebuild when anything in the frontend source is newer than the last build (so updates always show up)
+const newestMtime = (dir) =>
+  fs.readdirSync(dir, { withFileTypes: true }).reduce((m, e) => {
+    const p = path.join(dir, e.name);
+    return Math.max(m, e.isDirectory() ? (e.name === "node_modules" || e.name === "dist" ? 0 : newestMtime(p)) : fs.statSync(p).mtimeMs);
+  }, 0);
+const stale = fs.existsSync(dist) && newestMtime(path.join(frontendDir, "src")) > fs.statSync(dist).mtimeMs;
+if (args.has("--build") || stale || !fs.existsSync(dist)) {
+  say(stale ? "Frontend source changed since the last build. Rebuilding…" : "Building the frontend…");
   const r = spawnSync(npm, ["run", "build"], { cwd: frontendDir, stdio: "inherit", shell: process.platform === "win32" });
   if (r.status !== 0) die("Frontend build failed.");
 }
@@ -83,8 +90,8 @@ function onReady() {
     say(`  LOCAL NETWORK MODE. On your phone (same Wi-Fi/router) open:\n`);
     (lanIps.length ? lanIps : ["<this-PC's-IP>"]).forEach((ip) => say(`    http://${ip}:${PORT}`));
     say(`\n  • Text chat, photos, files and statuses work over plain http.`);
-    say(`  • Calls (camera/mic) and "install app" are blocked by browsers on plain http;`);
-    say(`    use  npm run share  (https link) when you want to test calls.`);
+    say(`  • Calls (camera/mic), voice notes (mic), push notifications and "install app" are blocked by browsers`);
+    say(`    on plain http; use  npm run share  (https link) when you want to test those.`);
     say(`  • If the phone can't connect: allow Node.js through Windows Firewall (Private networks),`);
     say(`    and make sure the router's "AP/client isolation" is off.`);
     say(`└────────────────────────────────────────────────────────────┘`);

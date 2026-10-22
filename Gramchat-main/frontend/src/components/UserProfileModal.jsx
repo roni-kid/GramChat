@@ -1,4 +1,4 @@
-import { X, Mail, User, Info } from "lucide-react";
+import { X, Mail, User, Info, AtSign } from "lucide-react";
 
 const UserProfileModal = ({ user, isOnline, onClose }) => {
   return (
@@ -58,6 +58,18 @@ const UserProfileModal = ({ user, isOnline, onClose }) => {
                   <p className="font-medium truncate">{user.fullName}</p>
                 </div>
               </div>
+
+              {user.username && (
+                <div className="flex items-center gap-3 p-3 bg-base-200 rounded-xl">
+                  <div className="size-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <AtSign className="size-4 text-primary" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-base-content/50 mb-0.5">Username</p>
+                    <p className="font-medium truncate">@{user.username}</p>
+                  </div>
+                </div>
+              )}
 
               {user.email && (
                 <div className="flex items-center gap-3 p-3 bg-base-200 rounded-xl">

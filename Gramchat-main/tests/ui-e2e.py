@@ -11,10 +11,13 @@ def note(ok, name, detail=""):
     findings.append({"pass": bool(ok), "name": name, "detail": detail})
     print(("PASS " if ok else "FAIL ") + name + (" — " + detail if detail else ""), flush=True)
 
+def uname(name):
+    return name.lower()
+
 def signup(pg, name):
     pg.goto(BASE + "/signup")
+    pg.get_by_placeholder("your_username").fill(uname(name))
     pg.get_by_placeholder("John Doe").fill(name)
-    pg.get_by_placeholder("you@example.com").fill(f"{name.lower().replace(' ','')}{s}@t.com")
     pg.get_by_placeholder("••••••••").fill("secret123")
     pg.locator("button[type=submit]").click()
     pg.wait_for_url(BASE + "/", timeout=8000)
@@ -41,15 +44,37 @@ with sync_playwright() as p:
     errsA = []
     A.on("console", lambda m: errsA.append(m.text) if m.type in ("error", "warning") else None)
 
-    BOB=f"Bobby{s}"; ALI=f"Alicia{s}"; LATE=f"Latecomer{s}"
+    BOB=f"Bobby{str(s)[-9:]}"; ALI=f"Alicia{str(s)[-9:]}"; LATE=f"Late{str(s)[-9:]}"
     signup(B, BOB); signup(A, ALI)
     A.wait_for_timeout(800)
     A.screenshot(path=f"{OUT}/02_home_empty.png")
 
     # new user appears in an already-open session?
     C = mk().new_page(); signup(C, LATE); A.wait_for_timeout(1200)
-    note(LATE in A.locator("aside").inner_text(), "newly registered user appears in an already-open sidebar without reload",
-         "user list is fetched once on mount and never refreshed")
+    note(LATE not in A.locator("aside").inner_text() and BOB not in A.locator("aside").inner_text(),
+         "strangers (and not-yet-added people) do NOT appear in my chat list")
+    A.screenshot(path=f"{OUT}/02b_no_contacts.png")
+
+    # ── add a contact through the real screens: A searches B's username, B accepts
+    A.locator("aside button", has_text="Add contact").click()
+    A.get_by_placeholder("Enter their exact username").fill(uname(BOB)[:6])
+    A.get_by_placeholder("Enter their exact username").press("Enter"); A.wait_for_timeout(500)
+    note(A.get_by_text("No one found").count() == 1, "partial username finds nobody (no browsing)")
+    A.get_by_placeholder("Enter their exact username").fill("@" + uname(BOB).upper())
+    A.get_by_placeholder("Enter their exact username").press("Enter"); A.wait_for_timeout(500)
+    A.screenshot(path=f"{OUT}/02c_search_result.png")
+    A.locator("div.fixed.inset-0 button.btn-primary", has_text="Add").click(); A.wait_for_timeout(700)
+    note(A.get_by_text("Requested").count() == 1, "request sent: card shows Requested")
+    A.keyboard.press("Escape"); A.mouse.click(5, 5); A.wait_for_timeout(300)
+    B.wait_for_timeout(800)
+    note("1 new" in B.locator("aside").inner_text(), "recipient sees a live '1 new' request badge (no reload)")
+    B.locator("aside button", has_text="Add contact").click(); B.wait_for_timeout(500)
+    B.screenshot(path=f"{OUT}/02d_requests.png")
+    B.get_by_role("button", name="Accept").click(); B.wait_for_timeout(900)
+    B.mouse.click(5, 5); B.wait_for_timeout(300)
+    note(ALI in B.locator("aside").inner_text(), "after accepting, requester appears in recipient's chat list")
+    A.wait_for_timeout(500)
+    note(BOB in A.locator("aside").inner_text(), "...and the recipient appears in the requester's list live")
     A.reload(); A.wait_for_timeout(1000)
 
     # ── THEMES
@@ -139,11 +164,27 @@ with sync_playwright() as p:
     A.screenshot(path=f"{OUT}/08_status.png")
     C.goto(BASE + "/status"); C.wait_for_timeout(900)
     note(ALI not in C.inner_text("body"), "a user who never chatted with Alice cannot see Alice's status",
-         "'Latecomer' has no relationship with Alice but sees her status")
+         "'Late' has no relationship with Alice but sees her status")
 
     # ── Voice call via real WebRTC
     A.goto(BASE + "/"); A.wait_for_timeout(900); open_chat(A, BOB)
     B.goto(BASE + "/"); B.wait_for_timeout(900); open_chat(B, ALI)
+
+    # ── Voice note (Chromium's fake microphone)
+    A.locator("button[aria-label='Record a voice message']").click(); A.wait_for_timeout(1800)
+    note(A.get_by_role("status").filter(has_text="Recording").count() == 1, "mic button starts a recording bar with a timer")
+    A.screenshot(path=f"{OUT}/09a_recording.png")
+    A.locator("button[aria-label='Send voice message']").click(); A.wait_for_timeout(1500)
+    note(pane(A).locator("audio").count() >= 1, "voice note shows up as an audio player for the sender")
+    B.wait_for_timeout(500)
+    note(pane(B).locator("audio").count() >= 1, "...and arrives live for the recipient")
+    note(A.get_by_role("status").filter(has_text="Recording").count() == 0, "recording bar goes away after sending")
+    A.screenshot(path=f"{OUT}/09b_voice_note.png")
+    A.locator("button[aria-label='Record a voice message']").click(); A.wait_for_timeout(800)
+    A.locator("button[aria-label='Discard recording']").click(); A.wait_for_timeout(500)
+    n_audio = pane(A).locator("audio").count()
+    note(n_audio == 1 and A.get_by_placeholder("Type a message...").is_visible(), "discarding a recording sends nothing and brings the text box back")
+
     A.locator("button[title='Voice call']").click()
     try:
         B.get_by_text("Incoming voice call").wait_for(timeout=5000)
@@ -161,12 +202,34 @@ with sync_playwright() as p:
     # ── Mobile
     M = br.new_context(viewport={"width": 390, "height": 780}, device_scale_factor=2, is_mobile=True, has_touch=True).new_page()
     M.goto(BASE + "/login")
-    M.get_by_placeholder("you@example.com").fill(f"{ALI.lower()}{s}@t.com"); M.get_by_placeholder("••••••••").fill("secret123")
+    M.get_by_placeholder("your_username (or your old email)").fill(uname(ALI)); M.get_by_placeholder("••••••••").fill("secret123")
     M.locator("button[type=submit]").click(); M.wait_for_timeout(1500)
     M.screenshot(path=f"{OUT}/11_mobile_home.png")
     M.locator("aside button", has_text=BOB).first.click(); M.wait_for_timeout(700)
     M.screenshot(path=f"{OUT}/12_mobile_chat.png")
     note(not M.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"), "mobile: no horizontal overflow")
+
+    # ── privacy toggle: switch "show online" off in Settings; contact no longer sees me online
+    B.goto(BASE + "/"); B.wait_for_timeout(900); open_chat(B, ALI)
+    note("Online" in B.locator("div.p-2\\.5").first.inner_text(), "contact sees me as Online in chat header")
+    A.goto(BASE + "/settings"); A.wait_for_timeout(600)
+    A.get_by_text("Show when I'm online").click(); A.wait_for_timeout(1000)
+    note("Online" not in B.locator("div.p-2\\.5").first.inner_text(), "after I switch 'show online' off, contact sees me as not online (live)")
+    A.screenshot(path=f"{OUT}/13_settings_privacy.png")
+    A.get_by_text("Show when I'm online").click(); A.wait_for_timeout(600)
+
+    # ── block via the header menu
+    A.goto(BASE + "/"); A.wait_for_timeout(900); open_chat(A, BOB)
+    A.on("dialog", lambda d: d.accept())
+    A.get_by_title("More").click(); A.wait_for_timeout(300)
+    A.screenshot(path=f"{OUT}/14_menu.png")
+    A.get_by_role("button", name="Block").click(); A.wait_for_timeout(1200)
+    note(BOB not in A.locator("aside").inner_text(), "blocked person disappears from my chat list and the chat closes")
+    B.wait_for_timeout(600)
+    note(ALI not in B.locator("aside").inner_text(), "...and I disappear from theirs, with no 'blocked' notice")
+    B.locator("aside button", has_text="Add contact").click(); B.get_by_placeholder("Enter their exact username").fill(uname(ALI))
+    B.get_by_placeholder("Enter their exact username").press("Enter"); B.wait_for_timeout(600)
+    note(B.get_by_text("No one found").count() == 1, "blocked person can't find me by username")
 
     note(A.evaluate("fetch('/manifest.webmanifest').then(r=>r.status)") == 200 and A.evaluate("navigator.serviceWorker.getRegistrations().then(r=>r.length)") >= 1,
          "PWA: manifest served and service worker registered")

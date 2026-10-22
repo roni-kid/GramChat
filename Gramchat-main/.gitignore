@@ -36,3 +36,7 @@ things-to.md
 # Uploaded user media (private)
 backend/uploads/
 uploads/
+
+# Push (VAPID) private key generated on first start
+backend/vapid.json
+vapid.json

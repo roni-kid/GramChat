@@ -7,6 +7,7 @@ import User from "../models/user.model.js";
 import Group from "../models/group.model.js";
 import Message from "../models/message.model.js";
 import { areContacts, getContactIds } from "./relations.js";
+import { recordDelivered, emitReceiptBatches } from "./groupReceipts.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -89,6 +90,15 @@ const markDelivered = async (userId) => {
   }
 };
 
+// Group delivery receipts (Phase 2F): this device is connected now, so group messages it hasn't been told about are delivered.
+const markGroupDelivered = async (userId) => {
+  try {
+    emitReceiptBatches(await recordDelivered(userId), emitToUser);
+  } catch (e) {
+    console.log("group delivery sweep failed:", e.message);
+  }
+};
+
 const isMember = async (groupId, userId) => {
   if (!/^[a-f\d]{24}$/i.test(String(groupId))) return false;
   return !!(await Group.exists({ _id: groupId, members: userId }));
@@ -104,6 +114,7 @@ io.on("connection", async (socket) => {
 
   refreshPresence(userId);
   markDelivered(userId);
+  markGroupDelivered(userId);
 
   // ── Typing (DM) ──
   const toContact = async (to, event, payload) => {

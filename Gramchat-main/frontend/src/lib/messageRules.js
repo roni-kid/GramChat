@@ -53,3 +53,19 @@ export const timerLabel = (seconds) => {
 
 /** `ids` is a Set of message ids that disappeared: drop them from a list. */
 export const removeIds = (list, ids) => list.filter((m) => !ids.has(m._id));
+
+// ── Phase 2F: group ticks and "Keep" ──
+/** The ticks of one of MY group messages, from the server's counts `{ total, delivered, read, readTotal }`:
+ *  sent → delivered (every member has it) → seen (everyone who shares read receipts has read it). */
+export const groupTick = (ticks) => {
+  if (!ticks) return { state: "sent", label: "✓ Sent" };
+  const { total, delivered, read, readTotal } = ticks;
+  if (readTotal > 0 && read >= readTotal) return { state: "read", label: "✓✓ Seen" };
+  if (total > 0 && delivered >= total) return { state: "delivered", label: read > 0 ? `✓✓ Delivered · seen by ${read}` : "✓✓ Delivered" };
+  return { state: "sent", label: delivered > 0 ? `✓ Sent · delivered to ${delivered} of ${total}` : "✓ Sent" };
+};
+
+/** A message that is set to disappear can be kept (the server decides; this only shows the menu item). */
+export const canKeep = (m) => !!m.expiresAt && !m.keptBy && !m.viewOnce && !m.deletedForEveryone && !m.pending;
+/** A kept message can be unkept by whoever kept it, or by its sender. */
+export const canUnkeep = (m, myId) => !!m.keptBy && !m.deletedForEveryone && (idOf(m.keptBy) === myId || isMine(m, myId));

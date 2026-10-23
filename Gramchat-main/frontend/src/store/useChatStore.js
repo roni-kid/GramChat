@@ -4,6 +4,7 @@ import { axiosInstance } from "../lib/axios";
 import { useAuthStore } from "./useAuthStore";
 import { patchById, applyDeletedToList, patchLast, DELETED_PREVIEW_PATCH, removeIds, timerLabel } from "../lib/messageRules";
 import { useGroupStore } from "./useGroupStore";
+import { useTranscriptStore } from "./useTranscriptStore";
 
 const idOf = (v) => (v && v._id) || v;
 const PAGE_SIZE = 50; // matches the server default
@@ -184,6 +185,7 @@ export const useChatStore = create((set, get) => ({
   // The server deleted these (their time ran out): drop them from the open chat, the pins and the chat list preview
   applyExpired: (ids) => {
     const gone = new Set(ids);
+    useTranscriptStore.getState().forget(ids); // a transcript never outlives its message
     const wasLast = Object.values(get().conversations).some((c) => gone.has(c.lastMessage?._id));
     set((s) => ({ messages: removeIds(s.messages, gone), pinned: removeIds(s.pinned, gone) }));
     if (wasLast) get().getUsers(); // the preview must fall back to the previous message
@@ -201,6 +203,21 @@ export const useChatStore = create((set, get) => ({
     set((s) => ({
       messages: s.messages.map((m) => (m._id === messageId ? { ...m, mediaWiped: true, viewOnceState: m.viewedByMe || m.viewCount > 0 ? "opened" : "expired" } : m)),
     })),
+
+  // ── Phase 2F: Keep ──
+  // Someone kept / un-kept a message: it stops / resumes expiring
+  applyKept: ({ messageId, keptBy, expiresAt }) => {
+    const patch = { keptBy: keptBy || undefined, expiresAt: expiresAt || undefined };
+    set((s) => ({ messages: patchById(s.messages, messageId, patch), pinned: patchById(s.pinned, messageId, patch) }));
+  },
+  toggleKeep: async (messageId, kept) => {
+    try {
+      const res = await axiosInstance.put(`/messages/keep/${messageId}`, { kept });
+      get().applyKept({ messageId, keptBy: res.data.keptBy, expiresAt: res.data.expiresAt });
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Couldn't change that");
+    }
+  },
 
   getPinned: async (userId) => {
     try {
@@ -227,6 +244,7 @@ export const useChatStore = create((set, get) => ({
       await axiosInstance.delete(`/messages/${messageId}`, { params: { scope } });
       if (scope === "everyone") get().applyDeleted(messageId);
       else get().applyDeletedForMe(messageId);
+      useTranscriptStore.getState().forget(messageId); // a transcript never outlives its message
     } catch (error) {
       toast.error(error.response?.data?.message || "Couldn't delete the message");
     }
@@ -295,7 +313,7 @@ export const useChatStore = create((set, get) => ({
 
     // Phase 2A. Events that carry a groupId belong to the group store.
     socket.on("messageEdited", ({ groupId, ...p }) => { if (!groupId) get().applyEdit(p); });
-    socket.on("messageDeleted", ({ groupId, messageId }) => { if (!groupId) get().applyDeleted(messageId); });
+    socket.on("messageDeleted", ({ groupId, messageId }) => { if (!groupId) { get().applyDeleted(messageId); useTranscriptStore.getState().forget(messageId); } });
     socket.on("messageDeletedForMe", ({ messageId }) => get().applyDeletedForMe(messageId));
     socket.on("messageStarred", ({ messageId, starred }) => get().applyStar(messageId, starred));
     socket.on("messagePinned", ({ groupId, ...p }) => { if (!groupId) get().applyPin(p); });
@@ -317,6 +335,13 @@ export const useChatStore = create((set, get) => ({
         : useGroupStore.getState().groups.find((g) => g._id === id)?.members?.find((m) => (m._id || m) === by)?.fullName;
       toast(`${name || "Someone"} ${seconds ? `set new messages to disappear after ${timerLabel(seconds)}` : "turned off disappearing messages"}`, { icon: "⏱" });
     });
+    // Phase 2F
+    socket.on("messageKept", ({ groupId, by, ...p }) => {
+      if (groupId) return;
+      get().applyKept(p);
+      if (p.keptBy && by && by !== me()) toast(`${get().users.find((u) => u._id === by)?.fullName || "Someone"} kept a message`, { icon: "🔖" });
+    });
+
     // After a dropped connection a timer may have been changed meanwhile
     const onConnect = () => get().loadTimers();
     socket.on("connect", onConnect);
@@ -331,7 +356,7 @@ export const useChatStore = create((set, get) => ({
     return () => {
       ["newMessage", "messagesRead", "messagesReadByMe", "messageReaction", "userTyping", "userStopTyping",
         "messageEdited", "messageDeleted", "messageDeletedForMe", "messageStarred", "messagePinned", "messagePreview", "messagesDelivered",
-        "messagesExpired", "messageViewed", "messageViewWiped", "chatTimer"].forEach((e) => socket.off(e));
+        "messagesExpired", "messageViewed", "messageViewWiped", "chatTimer", "messageKept"].forEach((e) => socket.off(e));
       socket.off("connect", onConnect);
       document.removeEventListener("visibilitychange", onVisible);
     };

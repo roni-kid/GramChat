@@ -46,6 +46,7 @@ export const emitToConversation = (m, event, payload) => {
 export const WIPE_FIELDS = {
   text: 1, image: 1, fileUrl: 1, fileType: 1, fileName: 1, fileSize: 1, voice: 1, voiceDuration: 1, replyTo: 1, pinnedAt: 1, pinnedBy: 1, editedAt: 1, linkPreview: 1,
   viewOnce: 1, viewOnceKind: 1, views: 1, mediaWiped: 1, wipeAt: 1, // a retracted view-once message is an ordinary tombstone
+  voiceWaveform: 1, keptBy: 1, keptAt: 1,
 };
 
 /** What a client may see: per-user data collapses to `starred: boolean`, private arrays are removed, tombstones carry no content. */
@@ -54,6 +55,9 @@ export const forViewer = (msg, viewerId) => {
   o.starred = (o.starredBy || []).some((id) => same(id, viewerId));
   delete o.starredBy;
   delete o.deletedFor;
+  // Who got / read a group message never leaves the server as raw lists: the sender is sent counts (`ticks`) instead
+  delete o.deliveredTo;
+  delete o.readBy;
   // The idempotency key is the sender's business: only the sender's own devices get it back
   if (!same(o.senderId?._id ?? o.senderId, viewerId)) delete o.clientId;
   if (o.deletedForEveryone) {
@@ -71,7 +75,7 @@ export const forViewer = (msg, viewerId) => {
     if (mine) o.viewCount = views.length;
     o.viewedByMe = seenByMe;
     o.viewOnceState = opened ? "opened" : o.mediaWiped ? "expired" : "unopened";
-    for (const k of ["views", "image", "fileUrl", "fileType", "fileName", "fileSize", "text", "linkPreview", "wipeAt", "mediaWiped"]) delete o[k];
+    for (const k of ["views", "image", "fileUrl", "fileType", "fileName", "fileSize", "text", "linkPreview", "wipeAt", "mediaWiped", "voiceWaveform"]) delete o[k];
   }
   return o;
 };

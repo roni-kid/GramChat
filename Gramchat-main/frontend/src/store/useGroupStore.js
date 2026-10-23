@@ -3,12 +3,17 @@ import toast from "react-hot-toast";
 import { axiosInstance } from "../lib/axios";
 import { useAuthStore } from "./useAuthStore";
 import { patchById, applyDeletedToList, removeIds } from "../lib/messageRules";
+import { useTranscriptStore } from "./useTranscriptStore";
 
 const idOf = (v) => (v && v._id) || v;
 const PAGE_SIZE = 50; // matches the server default
 const withMessage = (list, msg) => (list.some((m) => m._id === msg._id) ? list : [...list, msg]);
 // A group's `lastMessage` is a full message object: patch it when it is the one that changed
 const patchGroupLast = (groups, id, patch) => groups.map((g) => (g.lastMessage?._id === id ? { ...g, lastMessage: { ...g.lastMessage, ...patch } } : g));
+
+// Phase 2F: tell the server I'm looking at this group (it marks other members' messages read for me and updates their ticks)
+let readTimer = null;
+const visible = () => typeof document !== "undefined" && document.visibilityState === "visible";
 
 export const useGroupStore = create((set, get) => ({
   groups: [],
@@ -98,7 +103,13 @@ export const useGroupStore = create((set, get) => ({
   // Called by the send queue once the server has accepted a message (the socket may deliver the same one: de-duplicated by id)
   applySentGroup: (msg) =>
     set((s) => ({
-      groupMessages: s.selectedGroup?._id === msg.groupId ? withMessage(s.groupMessages, msg) : s.groupMessages,
+      groupMessages:
+        s.selectedGroup?._id !== msg.groupId
+          ? s.groupMessages
+          : s.groupMessages.some((m) => m._id === msg._id)
+            // the socket event got here first (it carries no ticks): add the sender's ticks, but never overwrite newer ones
+            ? s.groupMessages.map((m) => (m._id === msg._id && !m.ticks ? { ...m, ticks: msg.ticks } : m))
+            : [...s.groupMessages, msg],
       groups: s.groups.map((g) => (g._id === msg.groupId ? { ...g, lastMessage: msg } : g)),
     })),
 
@@ -207,6 +218,7 @@ export const useGroupStore = create((set, get) => ({
       await axiosInstance.delete(`/messages/${messageId}`, { params: { scope } });
       if (scope === "everyone") get().applyDeleted(messageId);
       else get().applyDeletedForMe(messageId);
+      useTranscriptStore.getState().forget(messageId); // a transcript never outlives its message
     } catch (error) {
       toast.error(error.response?.data?.message || "Couldn't delete the message");
     }
@@ -230,6 +242,40 @@ export const useGroupStore = create((set, get) => ({
     }
   },
 
+  // ── Phase 2F: per-member ticks and Keep ──
+  // I'm looking at this group (it just opened, or something arrived while it's open and visible): debounced, cheap, idempotent
+  markRead: (groupId) => {
+    clearTimeout(readTimer);
+    readTimer = setTimeout(async () => {
+      if (!visible() || get().selectedGroup?._id !== groupId) return;
+      try {
+        await axiosInstance.put(`/groups/${groupId}/read`);
+      } catch {
+        /* the next arrival or visit tries again */
+      }
+    }, 250);
+  },
+  // The server's new tick counts for some of MY messages (absolute numbers, so a repeated event is harmless)
+  applyGroupReceipt: ({ groupId, updates }) =>
+    set((s) => {
+      if (s.selectedGroup?._id !== groupId) return {};
+      const byId = new Map(updates.map((u) => [u.messageId, u.ticks]));
+      return { groupMessages: s.groupMessages.map((m) => (byId.has(m._id) ? { ...m, ticks: byId.get(m._id) } : m)) };
+    }),
+  // Someone kept / un-kept a message: it stops / resumes expiring
+  applyKept: ({ messageId, keptBy, expiresAt }) => {
+    const patch = { keptBy: keptBy || undefined, expiresAt: expiresAt || undefined };
+    set((s) => ({ groupMessages: patchById(s.groupMessages, messageId, patch), pinned: patchById(s.pinned, messageId, patch), groups: patchGroupLast(s.groups, messageId, patch) }));
+  },
+  toggleKeep: async (messageId, kept) => {
+    try {
+      const res = await axiosInstance.put(`/messages/keep/${messageId}`, { kept });
+      get().applyKept({ messageId, keptBy: res.data.keptBy, expiresAt: res.data.expiresAt });
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Couldn't change that");
+    }
+  },
+
   // ── Phase 2E: disappearing messages and view-once (same action names as the DM store) ──
   // Admin only (the server enforces it). The group then carries `disappearAfter`, and members get it through `groupUpdated`.
   setDisappearing: async (groupId, seconds) => {
@@ -248,6 +294,7 @@ export const useGroupStore = create((set, get) => ({
   // The server deleted these (their time ran out)
   applyExpired: (ids) => {
     const gone = new Set(ids);
+    useTranscriptStore.getState().forget(ids); // a transcript never outlives its message
     const wasLast = get().groups.some((g) => gone.has(g.lastMessage?._id));
     set((s) => ({ groupMessages: removeIds(s.groupMessages, gone), pinned: removeIds(s.pinned, gone) }));
     if (wasLast) get().getMyGroups(); // the preview must fall back to the previous message
@@ -288,6 +335,7 @@ export const useGroupStore = create((set, get) => ({
     socket.on("newGroupMessage", ({ groupId, message }) => {
       const viewing = get().selectedGroup?._id === groupId;
       const mine = idOf(message.senderId) === me();
+      if (viewing && !mine) get().markRead(groupId); // I'm looking at it: it's read
       set((s) => ({
         groupMessages: viewing ? withMessage(s.groupMessages, message) : s.groupMessages,
         groups: s.groups.map((g) => (g._id === groupId ? { ...g, lastMessage: message } : g)),
@@ -310,7 +358,7 @@ export const useGroupStore = create((set, get) => ({
 
     // Phase 2A. Only events that carry a groupId belong here (the DM store handles the rest).
     socket.on("messageEdited", ({ groupId, ...p }) => { if (groupId) get().applyEdit(p); });
-    socket.on("messageDeleted", ({ groupId, messageId }) => { if (groupId) get().applyDeleted(messageId); });
+    socket.on("messageDeleted", ({ groupId, messageId }) => { if (groupId) { get().applyDeleted(messageId); useTranscriptStore.getState().forget(messageId); } });
     socket.on("messageDeletedForMe", ({ messageId, groupId }) => { if (groupId) get().applyDeletedForMe(messageId); });
     socket.on("messageStarred", ({ messageId, starred }) => get().applyStar(messageId, starred));
     socket.on("messagePinned", ({ groupId, ...p }) => { if (groupId) get().applyPin(p); });
@@ -321,7 +369,26 @@ export const useGroupStore = create((set, get) => ({
     socket.on("messageViewed", ({ groupId, ...p }) => { if (groupId) get().applyViewed(p); });
     socket.on("messageViewWiped", ({ groupId, messageId }) => { if (groupId) get().applyViewWiped(messageId); });
 
+    // Phase 2F
+    socket.on("groupReceipt", (p) => get().applyGroupReceipt(p));
+    socket.on("messageKept", ({ groupId, by, ...p }) => {
+      if (!groupId) return;
+      get().applyKept(p);
+      if (p.keptBy && by && by !== me()) {
+        const name = get().groups.find((g) => g._id === groupId)?.members?.find((m) => (m._id || m) === by)?.fullName;
+        toast(`${name || "Someone"} kept a message`, { icon: "🔖" });
+      }
+    });
+
     return () => ["newGroupMessage", "messageReaction", "groupUpdated", "removedFromGroup", "groupCreated", "groupUserTyping", "groupUserStopTyping",
-      "messageEdited", "messageDeleted", "messageDeletedForMe", "messageStarred", "messagePinned", "messagePreview", "messagesExpired", "messageViewed", "messageViewWiped"].forEach((e) => socket.off(e));
+      "messageEdited", "messageDeleted", "messageDeletedForMe", "messageStarred", "messagePinned", "messagePreview", "messagesExpired", "messageViewed", "messageViewWiped", "groupReceipt", "messageKept"].forEach((e) => socket.off(e));
   },
 }));
+
+// Coming back to the tab while a group is open: whatever arrived meanwhile is now read
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    const g = useGroupStore.getState().selectedGroup;
+    if (g && visible()) useGroupStore.getState().markRead(g._id);
+  });
+}

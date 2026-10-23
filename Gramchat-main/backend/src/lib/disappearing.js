@@ -4,6 +4,8 @@
 // for a group (admin only). A NEW message gets `expiresAt = now + timer` when the server stores it; messages already in
 // the chat are not touched, and later changes of the timer don't change a message's expiry.
 //
+// Phase 2F: a message that someone "kept" has no `expiresAt` while it is kept, so it is never swept (and never listed as expired).
+//
 // Two layers make "gone" reliable: every query that lists messages hides anything past `expiresAt` right away
 // (notExpired), and the sweeper deletes the rows and their files a few seconds later and tells the open chats.
 import Message from "../models/message.model.js";
@@ -54,29 +56,36 @@ export const sweepOnce = async () => {
       .lean();
     if (due.length) {
       const ids = due.map((d) => d._id);
-      await Message.deleteMany({ _id: { $in: ids } });
-      for (const d of due) [d.image, d.fileUrl, d.linkPreview?.image].forEach((f) => f && deleteUpload(f));
+      // Only rows that STILL have an expired `expiresAt`: a message kept between the find above and now is left alone
+      await Message.deleteMany({ _id: { $in: ids }, expiresAt: { $lte: now } });
+      const survivors = new Set((await Message.find({ _id: { $in: ids } }).select("_id").lean()).map((r) => r._id.toString()));
+      const gone = due.filter((d) => !survivors.has(d._id.toString()));
 
-      // A group's list preview points at its last message: move it back to the newest one that is still there
-      const groupIds = [...new Set(due.filter((d) => d.groupId).map((d) => d.groupId.toString()))];
-      for (const gid of groupIds) {
-        const g = await Group.findById(gid).select("lastMessage").lean();
-        if (g?.lastMessage && ids.some((i) => i.equals(g.lastMessage))) {
-          const prev = await Message.findOne({ groupId: gid, ...notExpired() }).sort({ createdAt: -1 }).select("_id").lean();
-          await Group.updateOne({ _id: gid }, prev ? { $set: { lastMessage: prev._id } } : { $unset: { lastMessage: 1 } }, { timestamps: false });
+      if (gone.length) {
+        for (const d of gone) [d.image, d.fileUrl, d.linkPreview?.image].forEach((f) => f && deleteUpload(f));
+
+        // A group's list preview points at its last message: move it back to the newest one that is still there
+        const goneIds = gone.map((d) => d._id);
+        const groupIds = [...new Set(gone.filter((d) => d.groupId).map((d) => d.groupId.toString()))];
+        for (const gid of groupIds) {
+          const g = await Group.findById(gid).select("lastMessage").lean();
+          if (g?.lastMessage && goneIds.some((i) => i.equals(g.lastMessage))) {
+            const prev = await Message.findOne({ groupId: gid, ...notExpired() }).sort({ createdAt: -1 }).select("_id").lean();
+            await Group.updateOne({ _id: gid }, prev ? { $set: { lastMessage: prev._id } } : { $unset: { lastMessage: 1 } }, { timestamps: false });
+          }
         }
-      }
 
-      // Tell the chats (1:1: both people; group: the room)
-      const dm = new Map();
-      const grp = new Map();
-      for (const d of due) {
-        const id = d._id.toString();
-        if (d.groupId) push(grp, d.groupId.toString(), id);
-        else push(dm, [d.senderId, d.receiverId].map(String).sort().join(":"), id);
+        // Tell the chats (1:1: both people; group: the room)
+        const dm = new Map();
+        const grp = new Map();
+        for (const d of gone) {
+          const id = d._id.toString();
+          if (d.groupId) push(grp, d.groupId.toString(), id);
+          else push(dm, [d.senderId, d.receiverId].map(String).sort().join(":"), id);
+        }
+        for (const [pair, messageIds] of dm) pair.split(":").forEach((u) => emitToUser(u, "messagesExpired", { messageIds }));
+        for (const [groupId, messageIds] of grp) emitToGroup(groupId, "messagesExpired", { messageIds, groupId });
       }
-      for (const [pair, messageIds] of dm) pair.split(":").forEach((u) => emitToUser(u, "messagesExpired", { messageIds }));
-      for (const [groupId, messageIds] of grp) emitToGroup(groupId, "messagesExpired", { messageIds, groupId });
     }
 
     // View-once media that is past its wipe time (never opened for 14 days, or opened and never closed)

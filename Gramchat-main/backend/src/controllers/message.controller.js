@@ -16,6 +16,7 @@ import { notifyDM, notifyGroup } from "../lib/push.js";
 import { schedulePreview, refreshPreviewAfterEdit } from "../lib/linkPreviewService.js";
 import { notExpired, expiryFor, dmDisappearAfter } from "../lib/disappearing.js";
 import { LINK_TTL_MS, WIPE_AFTER_OPEN_MS, signViewLink, mediaFileOf, otherMemberIds, wipeViewOnceMedia } from "../lib/viewOnce.js";
+import { deliveredNow, infoFor } from "../lib/groupReceipts.js";
 
 const PERSON_FIELDS = "username fullName profilePic"; // never email / password
 const same = (a, b) => !!a && !!b && a.toString() === b.toString();
@@ -441,6 +442,7 @@ const cloneForForward = async (src) => {
     if (src.voice) {
       f.voice = true;
       f.voiceDuration = src.voiceDuration;
+      if (src.voiceWaveform?.length) f.voiceWaveform = src.voiceWaveform;
     }
   }
   return f;
@@ -480,7 +482,11 @@ export const forwardMessage = async (req, res) => {
         if (!fields) { fail("The attachment is no longer available"); continue; }
 
         if (group) {
-          const msg = await Message.create({ senderId: me, groupId: group._id, ...fields, expiresAt: expiryFor(group.disappearAfter) });
+          const msg = await Message.create({
+            senderId: me, groupId: group._id, ...fields,
+            expiresAt: expiryFor(group.disappearAfter),
+            deliveredTo: deliveredNow(group.members, me, isUserOnline),
+          });
           await msg.populate("senderId", PERSON_FIELDS);
           group.lastMessage = msg._id;
           await group.save();
@@ -676,6 +682,81 @@ export const closeViewOnce = async (req, res) => {
     res.status(200).json({ messageId: m._id.toString() });
   } catch (error) {
     console.log("Error in closeViewOnce controller:", error.message);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// ───────────────────────── Phase 2F: keep, message info ─────────────────────────
+
+/** PUT /messages/keep/:id  { kept: boolean } — "Keep" a disappearing message so it stays.
+ *  Anyone in the chat can keep a message that is set to expire; the chat is told (`messageKept`) so the sender can see it was kept.
+ *  Unkeep: the person who kept it, or the message's sender. The message then goes back to the chat's CURRENT rule: it gets a fresh
+ *  countdown from the chat's timer now, or stays for good if the chat's timer is off. View-once messages can't be kept. */
+export const keepMessage = async (req, res) => {
+  try {
+    const me = req.user._id;
+    const { kept } = req.body || {};
+    if (typeof kept !== "boolean") return res.status(400).json({ message: "kept must be true or false" });
+    const m = await loadAccessible(req.params.id, me);
+    if (!m) return res.status(404).json({ message: "Message not found" });
+    if (!m.groupId && !(await areContacts(me, otherPartyOf(m, me)))) return res.status(403).json({ message: "You can only keep messages in chats with your contacts" });
+    if (m.deletedForEveryone) return res.status(400).json({ message: "This message was deleted" });
+    if (m.viewOnce) return res.status(400).json({ message: "View-once messages can't be kept" });
+    const messageId = m._id.toString();
+    const by = me.toString();
+
+    if (kept) {
+      if (m.keptBy) return res.status(200).json({ messageId, keptBy: m.keptBy.toString() }); // already kept: nothing to do
+      if (!m.expiresAt) return res.status(400).json({ message: "Only disappearing messages can be kept" });
+      // Atomic: if the sweeper or a second keeper got there first, this changes nothing
+      const r = await Message.updateOne(
+        { _id: m._id, keptBy: null, expiresAt: { $gt: new Date() } },
+        { $set: { keptBy: me, keptAt: new Date() }, $unset: { expiresAt: 1 } }
+      );
+      if (!r.modifiedCount) {
+        const cur = await Message.findById(m._id).select("keptBy");
+        if (cur?.keptBy) return res.status(200).json({ messageId, keptBy: cur.keptBy.toString() });
+        return res.status(404).json({ message: "Message not found" }); // it disappeared in the meantime
+      }
+      emitToConversation(m, "messageKept", { messageId, keptBy: by, expiresAt: null, by });
+      return res.status(200).json({ messageId, keptBy: by });
+    }
+
+    if (!m.keptBy) return res.status(200).json({ messageId, keptBy: null }); // not kept: nothing to do
+    if (!same(m.keptBy, me) && !same(m.senderId, me)) return res.status(403).json({ message: "Only the person who kept it, or its sender, can unkeep it" });
+    const seconds = m.groupId
+      ? (await Group.findById(m.groupId).select("disappearAfter").lean())?.disappearAfter || 0
+      : await dmDisappearAfter(m.senderId, m.receiverId);
+    const expiresAt = expiryFor(seconds);
+    const update = { $unset: { keptBy: 1, keptAt: 1 } };
+    if (expiresAt) update.$set = { expiresAt };
+    await Message.updateOne({ _id: m._id }, update);
+    emitToConversation(m, "messageKept", { messageId, keptBy: null, expiresAt: expiresAt ? expiresAt.toISOString() : null, by });
+    res.status(200).json({ messageId, keptBy: null, expiresAt: expiresAt || null });
+  } catch (error) {
+    console.log("Error in keepMessage controller:", error.message);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+/** GET /messages/info/:id — who has received / read my GROUP message (sender only). Read times are hidden for people with read
+ *  receipts off, and all read information is hidden when I have them off (same reciprocity as 1:1 chats). */
+export const getMessageInfo = async (req, res) => {
+  try {
+    const me = req.user._id;
+    const m = await loadAccessible(req.params.id, me);
+    if (!m || !m.groupId) return res.status(404).json({ message: "Message not found" });
+    if (!same(m.senderId, me)) return res.status(403).json({ message: "Only the sender can see this" });
+    const group = await Group.findById(m.groupId).select("members");
+    if (!group) return res.status(404).json({ message: "Message not found" });
+
+    const info = await infoFor(m, group);
+    const ids = [...info.read, ...info.delivered, ...info.pending].map((e) => e.userId);
+    const people = new Map((await User.find({ _id: { $in: ids } }).select(PERSON_FIELDS).lean()).map((u) => [u._id.toString(), u]));
+    const named = (list) => list.map((e) => ({ user: people.get(e.userId) || { _id: e.userId, fullName: "Unknown" }, at: e.at }));
+    res.status(200).json({ total: info.total, readHidden: info.readHidden, read: named(info.read), delivered: named(info.delivered), pending: named(info.pending) });
+  } catch (error) {
+    console.log("Error in getMessageInfo controller:", error.message);
     res.status(500).json({ message: "Internal server error" });
   }
 };

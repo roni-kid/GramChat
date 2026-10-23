@@ -11,6 +11,7 @@ import { formatDuration } from "../lib/utils";
 import { useOutboxStore } from "../store/useOutboxStore";
 import { useDraftStore } from "../store/useDraftStore";
 import { OnceIcon } from "./ViewOnceBubble";
+import { computePeaks } from "../lib/waveform";
 
 // Drafts are kept per chat. The parents give this component a `key`, so it remounts (and reloads its draft) when the chat changes.
 const draftKeyFor = (store, groupId) => (store === "dm" ? `dm:${useChatStore.getState().selectedUser?._id}` : `group:${groupId}`);
@@ -146,7 +147,8 @@ const MessageInput = ({ store = "dm", groupId = null }) => {
       if (!rec) return;
       const dataUrl = await blobToDataUrl(rec.blob).catch(() => null);
       if (!dataUrl) return toast.error("Couldn't read the recording");
-      const payload = { text: "", fileUrl: dataUrl, fileName: "Voice message", voice: true, voiceDuration: rec.seconds, fileType: "audio", fileSize: rec.blob.size, viewOnce: voiceOnce && !replyingTo ? true : undefined };
+      const peaks = await computePeaks(rec.blob); // the bars the recipients will see (null if this browser can't decode it: they get a plain slider)
+      const payload = { text: "", fileUrl: dataUrl, fileName: "Voice message", voice: true, voiceDuration: rec.seconds, voiceWaveform: peaks || undefined, fileType: "audio", fileSize: rec.blob.size, viewOnce: voiceOnce && !replyingTo ? true : undefined };
       // The queue keeps the recording until it is delivered, so there is nothing to put back if the network is down
       queueMessage(payload);
       setVoiceOnce(false);

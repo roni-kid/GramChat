@@ -5,7 +5,7 @@ import { rateLimit } from "../middleware/rateLimit.js";
 import {
   getMessages, getUsersForSidebar, getConversations, sendMessage, markMessagesAsRead, addReaction,
   editMessage, deleteMessage, starMessage, pinMessage, getStarred, getPinnedForUser, getPinnedForGroup, forwardMessage,
-  searchMessages, getMediaForUser, getMediaForGroup, openViewOnce, closeViewOnce,
+  searchMessages, getMediaForUser, getMediaForGroup, openViewOnce, closeViewOnce, keepMessage, getMessageInfo,
 } from "../controllers/message.controller.js";
 
 const router = express.Router();
@@ -24,6 +24,7 @@ router.get("/media/user/:id", protectRoute, validIdParams("id"), getMediaForUser
 router.get("/media/group/:groupId", protectRoute, validIdParams("groupId"), getMediaForGroup);
 router.get("/pinned/user/:id", protectRoute, validIdParams("id"), getPinnedForUser);
 router.get("/pinned/group/:groupId", protectRoute, validIdParams("groupId"), getPinnedForGroup);
+router.get("/info/:id", protectRoute, validIdParams("id"), getMessageInfo); // Phase 2F: who received / read my group message
 router.get("/:id", protectRoute, validIdParams("id"), getMessages);
 router.post("/send/:id", protectRoute, validIdParams("id"), sendMessage);
 router.put("/read/:id", protectRoute, validIdParams("id"), markMessagesAsRead);
@@ -33,6 +34,7 @@ router.post("/react/:id", protectRoute, validIdParams("id"), addReaction);
 router.put("/edit/:id", protectRoute, validIdParams("id"), editMessage);
 router.put("/star/:id", protectRoute, validIdParams("id"), starMessage);
 router.put("/pin/:id", protectRoute, validIdParams("id"), pinMessage);
+router.put("/keep/:id", protectRoute, validIdParams("id"), keepMessage); // Phase 2F: keep a disappearing message
 router.post("/forward", protectRoute, forwardMessage);
 
 // Phase 2E: view-once media (the :id is a MESSAGE id)

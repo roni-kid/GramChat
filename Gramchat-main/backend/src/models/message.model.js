@@ -70,6 +70,23 @@ const messageSchema = new mongoose.Schema(
     },
     mediaWiped: { type: Boolean }, // the view-once file is gone from the server
     wipeAt: { type: Date },        // when the file is removed even if nobody pressed "close"
+
+    // Phase 2F
+    // Voice-note waveform: 16 to 128 integers 0..100, computed by the sender's app (cosmetic only)
+    voiceWaveform: { type: [Number], default: undefined },
+    // "Keep": someone in the chat kept this disappearing message, so it no longer expires (expiresAt is removed while kept)
+    keptBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    keptAt: { type: Date },
+    // GROUP messages only: who has received / read it (1:1 messages use deliveredAt and isRead). Never sent to clients as is:
+    // the sender gets counts (`ticks`) and, through "Message info", the people (read times are hidden for people with read receipts off).
+    deliveredTo: {
+      type: [new mongoose.Schema({ userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, at: { type: Date, required: true } }, { _id: false })],
+      default: undefined,
+    },
+    readBy: {
+      type: [new mongoose.Schema({ userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, at: { type: Date, required: true } }, { _id: false })],
+      default: undefined,
+    },
   },
   { timestamps: true }
 );

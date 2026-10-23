@@ -26,6 +26,10 @@ export const isDuplicateKeyError = (e) => e?.code === 11000;
 
 const dataUrlMime = (s) => (typeof s === "string" ? s.match(/^data:([a-z0-9.+\-/]+);base64,/i)?.[1]?.toLowerCase() : undefined);
 
+// The waveform is cosmetic, so a bad one is dropped rather than rejected: 8 to 128 integers between 0 and 100
+const sanitizeWaveform = (v) =>
+  Array.isArray(v) && v.length >= 8 && v.length <= 128 && v.every((n) => Number.isInteger(n) && n >= 0 && n <= 100) ? v : undefined;
+
 /** Validates the common body of a DM/group message and stores any attachment on local disk.
  *  Returns { error } or { fields } ready for `new Message(...)`.
  *  `viewOnce: true` (Phase 2E) turns one photo, video or voice note into a view-once message: no caption, no reply, the file is
@@ -69,6 +73,8 @@ export const buildMessageFields = async (body = {}) => {
       fields.voice = true;
       const d = Number(voiceDuration);
       if (Number.isFinite(d) && d > 0) fields.voiceDuration = Math.min(Math.round(d), MAX_VOICE_SECONDS);
+      const peaks = sanitizeWaveform(body.voiceWaveform);
+      if (peaks && !viewOnce) fields.voiceWaveform = peaks;
     }
   }
   if (viewOnce) {

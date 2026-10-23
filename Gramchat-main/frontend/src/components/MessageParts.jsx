@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Ban, Clock, Forward, Pin, Star, Timer } from "lucide-react";
+import { Ban, Bookmark, Clock, Forward, Pin, Star, Timer } from "lucide-react";
 import { useChatStore } from "../store/useChatStore";
 import { useGroupStore } from "../store/useGroupStore";
 import { useOutboxStore } from "../store/useOutboxStore";
@@ -29,9 +29,10 @@ export const PendingFooter = ({ message }) => {
 
 /** Small status line under a bubble's content: pinned / starred / edited / will disappear. */
 export const MessageFlags = ({ message }) => {
-  if (!message.pinnedAt && !message.starred && !message.editedAt && !message.expiresAt) return null;
+  if (!message.pinnedAt && !message.starred && !message.editedAt && !message.expiresAt && !message.keptBy) return null;
   return (
     <span className="self-end flex items-center gap-1 text-[10px] opacity-60 mt-0.5">
+      {message.keptBy && <span title="Kept: this message won't disappear"><Bookmark className="size-3" aria-label="Kept" /></span>}
       {message.expiresAt && (
         <span title={`Disappears ${new Date(message.expiresAt).toLocaleString()}`}><Timer className="size-3" aria-label="Disappearing message" /></span>
       )}

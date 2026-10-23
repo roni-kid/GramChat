@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
-import { CornerUpLeft, Copy, EllipsisVertical, Forward, Pencil, Pin, PinOff, Search, Star, Trash2, X } from "lucide-react";
+import { Bookmark, BookmarkMinus, CornerUpLeft, Copy, EllipsisVertical, Forward, Info, Pencil, Pin, PinOff, Search, Star, Trash2, X } from "lucide-react";
 import { useChatStore } from "../store/useChatStore";
 import { useGroupStore } from "../store/useGroupStore";
 import { useAuthStore } from "../store/useAuthStore";
-import { canEdit, canDeleteForEveryone, MAX_FORWARD_TARGETS } from "../lib/messageRules";
+import { canEdit, canDeleteForEveryone, canKeep, canUnkeep, MAX_FORWARD_TARGETS } from "../lib/messageRules";
+import MessageInfoModal from "./MessageInfoModal";
 import { previewOf } from "../lib/utils";
 
 const storeFor = (store) => (store === "dm" ? useChatStore : useGroupStore).getState();
@@ -163,6 +164,11 @@ const MessageMenu = ({ message, isOwn, store, onReply, onEdit }) => {
         { key: "fwd", label: "Forward", icon: Forward, run: () => setDialog("forward") },
         { key: "star", label: message.starred ? "Unstar" : "Star", icon: Star, run: () => act().toggleStar(message._id, !message.starred) },
         { key: "pin", label: message.pinnedAt ? "Unpin" : "Pin", icon: message.pinnedAt ? PinOff : Pin, run: () => act().togglePin(message._id, !message.pinnedAt) },
+        // Phase 2F: a message that is set to disappear can be kept (and un-kept by whoever kept it, or by its sender)
+        canKeep(message) && { key: "keep", label: "Keep message", icon: Bookmark, run: () => act().toggleKeep(message._id, true) },
+        canUnkeep(message, myId) && { key: "unkeep", label: "Unkeep", icon: BookmarkMinus, run: () => act().toggleKeep(message._id, false) },
+        // Group messages of mine: who received / read it
+        store === "group" && isOwn && !message.pending && { key: "info", label: "Message info", icon: Info, run: () => setDialog("info") },
         canEdit(message, myId) && { key: "edit", label: "Edit", icon: Pencil, run: () => onEdit(message) },
         { key: "del", label: "Delete…", icon: Trash2, danger: true, run: () => setDialog("delete") },
       ].filter(Boolean);
@@ -205,6 +211,7 @@ const MessageMenu = ({ message, isOwn, store, onReply, onEdit }) => {
 
       {dialog === "delete" && <DeleteDialog message={message} isOwn={isOwn} store={store} onClose={() => setDialog(null)} />}
       {dialog === "forward" && <ForwardModal message={message} onClose={() => setDialog(null)} />}
+      {dialog === "info" && <MessageInfoModal message={message} onClose={() => setDialog(null)} />}
     </>
   );
 };

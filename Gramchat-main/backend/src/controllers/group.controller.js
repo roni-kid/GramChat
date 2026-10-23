@@ -2,7 +2,7 @@ import Group from "../models/group.model.js";
 import User from "../models/user.model.js";
 import Message from "../models/message.model.js";
 import ChatPref from "../models/chatPref.model.js";
-import { emitToUser, emitToGroup, joinUserToGroup, removeUserFromGroup } from "../lib/socket.js";
+import { emitToUser, emitToGroup, joinUserToGroup, removeUserFromGroup, isUserOnline } from "../lib/socket.js";
 import { saveDataUrl, deleteUpload, UploadError } from "../lib/storage.js";
 import { buildMessageFields, replyBelongsTo, readClientId, findSentByClientId, isDuplicateKeyError, POPULATE_REPLY } from "../lib/messageUtils.js";
 import { isId } from "../middleware/validate.js";
@@ -11,6 +11,7 @@ import { forViewer } from "../lib/messageOps.js";
 import { notifyGroup } from "../lib/push.js";
 import { schedulePreview } from "../lib/linkPreviewService.js";
 import { isValidTimer, timerChoices, notExpired, expiryFor } from "../lib/disappearing.js";
+import { receiptContext, ticksFor, freshTicks, deliveredNow, recordRead, emitReceiptBatches } from "../lib/groupReceipts.js";
 
 const MEMBER_FIELDS = "username fullName profilePic"; // never email / password
 const MAX_MEMBERS = 256;
@@ -69,7 +70,9 @@ export const createGroup = async (req, res) => {
 export const getGroupMessages = async (req, res) => {
   try {
     const { groupId } = req.params;
-    if (!(await Group.exists({ _id: groupId, members: req.user._id }))) return res.status(403).json({ message: "Not a member of this group" });
+    const me = req.user._id;
+    const group = await Group.findOne({ _id: groupId, members: me }).select("members").lean();
+    if (!group) return res.status(403).json({ message: "Not a member of this group" });
 
     const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     const before = req.query.before ? new Date(req.query.before) : null;
@@ -78,7 +81,13 @@ export const getGroupMessages = async (req, res) => {
 
     const messages = await Message.find(filter).sort({ createdAt: -1 }).limit(limit)
       .populate("senderId", MEMBER_FIELDS).populate("replyTo", POPULATE_REPLY).lean();
-    res.status(200).json(messages.reverse().map((m) => forViewer(m, req.user._id)));
+    // The sender's own messages carry `ticks` (counts for the per-member ticks); the raw lists never leave the server
+    const ctx = await receiptContext(group);
+    res.status(200).json(messages.reverse().map((m) => {
+      const o = forViewer(m, me);
+      if (String(m.senderId?._id || m.senderId) === String(me)) o.ticks = ticksFor(m, ctx);
+      return o;
+    }));
   } catch (error) {
     console.log("Error in getGroupMessages:", error.message);
     res.status(500).json({ message: "Internal server error" });
@@ -103,7 +112,7 @@ export const sendGroupMessage = async (req, res) => {
       } else {
         await dup.populate("senderId", MEMBER_FIELDS);
         await dup.populate("replyTo", POPULATE_REPLY);
-        res.status(200).json(forViewer(dup, senderId));
+        res.status(200).json({ ...forViewer(dup, senderId), ticks: ticksFor(dup, await receiptContext(group)) });
       }
       return true;
     };
@@ -115,7 +124,11 @@ export const sendGroupMessage = async (req, res) => {
 
     let newMessage;
     try {
-      newMessage = await Message.create({ senderId, groupId, ...fields, clientId, expiresAt: expiryFor(group.disappearAfter) });
+      newMessage = await Message.create({
+        senderId, groupId, ...fields, clientId,
+        expiresAt: expiryFor(group.disappearAfter),
+        deliveredTo: deliveredNow(group.members, senderId, isUserOnline), // members connected right now already have it
+      });
     } catch (e) {
       if (clientId && isDuplicateKeyError(e)) {
         [fields.image, fields.fileUrl].forEach((f) => f && deleteUpload(f));
@@ -132,7 +145,7 @@ export const sendGroupMessage = async (req, res) => {
     emitToGroup(group._id, "newGroupMessage", { groupId: group._id, message: forViewer(newMessage, senderId) });
     notifyGroup(newMessage, req.user, group); // web push to members who enabled it
     schedulePreview(newMessage, req.user); // link card follows as a `messagePreview` event
-    res.status(201).json(forViewer(newMessage, senderId));
+    res.status(201).json({ ...forViewer(newMessage, senderId), ticks: freshTicks(group, newMessage) });
   } catch (error) {
     if (error instanceof UploadError) return res.status(400).json({ message: error.message });
     console.log("Error in sendGroupMessage:", error.message);
@@ -264,6 +277,22 @@ export const setGroupDisappearing = async (req, res) => {
     res.status(200).json(group);
   } catch (error) {
     console.log("Error in setGroupDisappearing:", error.message);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+/** PUT /groups/:groupId/read — I'm looking at this group: everything from other members that I hadn't read is now read (and delivered).
+ *  The senders get `groupReceipt` events with their messages' new tick counts. Cheap to call repeatedly: it only touches what's new. */
+export const markGroupRead = async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const me = req.user._id;
+    if (!(await Group.exists({ _id: groupId, members: me }))) return res.status(403).json({ message: "Not a member of this group" });
+    const batches = await recordRead(me, groupId);
+    emitReceiptBatches(batches, emitToUser);
+    res.status(200).json({ success: true, updated: batches.reduce((n, b) => n + b.updates.length, 0) });
+  } catch (error) {
+    console.log("Error in markGroupRead:", error.message);
     res.status(500).json({ message: "Internal server error" });
   }
 };

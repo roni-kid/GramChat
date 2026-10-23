@@ -40,3 +40,7 @@ uploads/
 # Push (VAPID) private key generated on first start
 backend/vapid.json
 vapid.json
+
+# On-device voice-note transcripts: the runtime and the speech model are downloaded by `npm run setup:transcripts` (large; not part of the repo)
+frontend/public/vendor/
+frontend/public/models/

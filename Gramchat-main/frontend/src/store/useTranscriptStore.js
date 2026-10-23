@@ -81,3 +81,6 @@ export const useTranscriptStore = create((set, get) => ({
     tClear();
   },
 }));
+
+// An explicit logout (see useAuthStore.logout) wipes the transcripts made on this device
+if (typeof window !== "undefined") window.addEventListener("gramchat:logout", () => useTranscriptStore.getState().reset());

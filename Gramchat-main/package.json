@@ -11,6 +11,7 @@
     "build": "npm run build --prefix frontend",
     "start": "npm run start --prefix backend",
     "share": "node scripts/share.cjs",
+    "setup:transcripts": "node scripts/setup-transcripts.cjs",
     "seed": "npm run seed --prefix backend",
     "test:api": "node tests/api-e2e.mjs",
     "test:api:2a": "node tests/phase2a-e2e.mjs",
@@ -18,6 +19,7 @@
     "test:api:2c": "node tests/phase2c-e2e.mjs",
     "test:api:2d": "node tests/phase2d-e2e.mjs",
     "test:api:2e": "node tests/phase2e-e2e.mjs",
+    "test:api:2f": "node tests/phase2f-e2e.mjs",
     "test:ui": "python tests/ui-e2e.py"
   },
   "keywords": [],

@@ -3,6 +3,7 @@ import { useThemeStore } from "../store/useThemeStore";
 import { useAuthStore } from "../store/useAuthStore";
 import { Send } from "lucide-react";
 import NotificationSettings from "../components/NotificationSettings";
+import TranscriptSettings from "../components/TranscriptSettings";
 
 const PREVIEW_MESSAGES = [
   { id: 1, content: "Hey! How's it going?", isSent: false },
@@ -33,7 +34,7 @@ const SettingsPage = () => {
             <label className="flex items-center justify-between gap-4 p-4 cursor-pointer">
               <div>
                 <div className="font-medium">Read receipts</div>
-                <div className="text-sm text-base-content/60">Show “Seen” on messages you read. If you turn it off you won't see others' either.</div>
+                <div className="text-sm text-base-content/60">Show “Seen” on messages you read, in chats and in groups (where it needs everyone who shares receipts to have read it). If you turn it off you won't see others' either.</div>
               </div>
               <input type="checkbox" className="toggle toggle-primary" checked={privacy.readReceipts !== false} onChange={(e) => updatePrivacy({ readReceipts: e.target.checked })} />
             </label>
@@ -58,6 +59,8 @@ const SettingsPage = () => {
         </section>
 
         <NotificationSettings />
+
+        <TranscriptSettings />
 
         <div className="flex flex-col gap-1">
           <h2 className="text-lg font-semibold">Theme</h2>

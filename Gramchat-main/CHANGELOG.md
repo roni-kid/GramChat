@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased: Phase 2F, group ticks, voice waveforms and transcripts, Keep (October 2026)
+
+**One optional install step** (only for transcripts, see below); everything else needs only a backend restart. No migration.
+
+### Added
+- **Per-member ticks in groups.** Your own group messages now show ✓ Sent, ✓✓ Delivered and ✓✓ Seen like 1:1 chats, with the numbers while it is partial ("Delivered to 2 of 4", "Delivered · seen by 3"). *Delivered* means every other member's device has received it; *Seen* means everyone who shares read receipts has read it. Tap the ticks (or ⋯ → *Message info*) to see who read it and when, who only received it, and who hasn't got it yet; it updates live.
+  - Receipts are reciprocal and private, like in 1:1 chats: someone with **read receipts off** never shows as having read anything (they appear under "Delivered to") and doesn't hold up "Seen"; if **you** have them off you see no read information at all (delivery is still shown). Which members have them off is never revealed.
+  - How it works: a group message records who received it (`deliveredTo`: members online when it is sent, plus anyone whose device connects later, for the last 30 days) and who read it (`readBy`: when they open the group or it arrives while they're looking at it, via `PUT /api/groups/:groupId/read`). Those lists never leave the server; senders get counts (`ticks`) and `groupReceipt` socket events with absolute numbers.
+- **Voice-note waveforms.** The sender's app measures the recording (48 bars) and sends it with the note, so everyone sees the same bars immediately; tap or drag to seek, arrow keys jump 5 s. Notes without one (older ones, or a browser that can't decode the recording) keep the plain slider. A malformed waveform is ignored, never rejected. Forwarded notes keep theirs; view-once notes carry none.
+- **Voice-note transcripts, on this device only.** Optional and off by default: each person turns it on in *Settings → Voice-note transcripts*, and a **Transcribe** button then appears on voice notes. A Whisper speech model runs inside the browser (a Web Worker); the audio never leaves the device and **nothing is sent to any server or third party, including this one**. The text is kept on this device only (IndexedDB), is wiped on logout, is **not** kept for messages that are set to disappear, and is dropped when its message is deleted or expires.
+  - It needs a one-time setup by the person running the server: `npm run setup:transcripts` (optionally `-- Xenova/whisper-base` for better accuracy, about 80 MB instead of 40), then `npm run build` and restart. That script installs the pinned `@huggingface/transformers@3.8.1` into `frontend/node_modules` **without changing package.json or the lockfile**, copies the runtime and WebAssembly files to `frontend/public/vendor/transcribe/`, downloads the model from huggingface.co into `frontend/public/models/` (the only time anything is fetched), and writes `frontend/public/models/transcribe.json`. All of that is git-ignored and eslint-ignored. At run time everything is loaded from your own server: remote model downloads are switched off in the worker.
+  - Until that is done the setting says it isn't available and nothing else changes. The worker is a plain static file (`frontend/public/transcribe-worker.js`), not part of the app bundle, so the app builds and runs the same with or without it. To remove the feature, delete `frontend/public/vendor` and `frontend/public/models`.
+- **Keep.** In a chat with disappearing messages, anyone in the chat can *Keep message* on a message that is set to disappear: it then stays (no expiry, a bookmark icon shows on it), and everyone is told (a toast names who kept it, so the sender can see). Un-keep: the person who kept it, or the message's sender. After un-keeping, the message goes back to the chat's *current* rule: a fresh countdown from the chat's timer now, or it simply stays if the timer has been turned off since. View-once messages and deleted messages can't be kept.
+- Endpoints: `PUT /api/groups/:groupId/read`, `GET /api/messages/info/:id` (group message, sender only), `PUT /api/messages/keep/:id` `{ kept }`. Socket events: `groupReceipt` (`{ groupId, updates: [{ messageId, ticks }] }`), `messageKept` (`{ messageId, keptBy|null, expiresAt|null, by, groupId? }`).
+- `npm run test:api:2f` (new file `tests/phase2f-e2e.mjs`, see `tests/README.md`).
+
+### Changed
+- The sweeper now deletes an expired message only if it is *still* expired at that moment, so a message kept during a sweep survives.
+- Settings → Read receipts now mentions groups.
+
+### Known limits
+- **Not run yet.** As before, I could write and read the code but not start your server or browser from here: nothing has been executed, not even a build or lint pass. Do this first: `npm run build --prefix frontend`, `npm run lint --prefix frontend`, restart the backend, `npm run test:api:2f` (both modes for the Keep-survives-expiry check, see `tests/README.md`), and click through a group with three accounts.
+- **Transcripts are the least certain part.** The model runtime is loaded in a way I could not test (a static module worker, the runtime's WebAssembly files from `/vendor/transcribe/`, the model from `/models/`). If *Transcribe* shows an error, open the browser console, and check that `frontend/public/vendor/transcribe/` has `transformers.min.js` plus `ort-wasm*` files and `frontend/public/models/<model>/` has `config.json` and an `onnx` folder. Safari and older phones may decode or run slower or not at all. A 5-minute note on the tiny model can take a minute or more on a laptop, longer on a phone. Transcripts can be wrong (names, noise, accents), and the models sometimes invent a word or two for silence.
+- Group ticks: messages from before this update show "✓ Sent" until members' devices reconnect (the last 30 days are then marked delivered; reads before this update are unknown). A member who left the group stops counting. Very large first-time catch-ups (a member opening a group with thousands of unread messages) send the senders a burst of tick updates.
+- If someone turns read receipts off and later on again, reads recorded in between become visible again.
+- Keep has no "keep for me only" and no chat line saying who kept what (a toast, and the bookmark icon).
+- Waveforms are drawn from the recording on the sender's device after it is made; they reflect volume, not words.
+
 ## Unreleased: Phase 2E, disappearing messages and view-once (October 2026)
 
 **Nothing to install and no migration** (the message, group and contact models already had the fields). Restart the backend: it now starts a background sweeper.

@@ -110,7 +110,8 @@ Original plan, for reference:
 **2A ✅ built (Oct 2026), awaiting your test run:** delivered ticks, edit, delete for me / for everyone, forward, star (+ Starred list), pin (≤3 per chat). API checks: `npm run test:api:2a`. Not yet browser-tested.
 **2B ✅ built (Oct 2026), awaiting your test run:** voice notes and push notifications. API checks: `npm run test:api:2b`. Needs `npm run setup` once (new `web-push` package) and the https link (`npm run share`) to try on a phone.
 **2E ✅ built (Oct 2026), awaiting your test run:** disappearing messages (24 h / 7 d / 90 d per chat; admin-only in groups) and view-once photos, videos and voice notes. API checks: `npm run test:api:2e` (two modes, see `tests/README.md`). Not yet run or browser-tested; a screenshot can't be prevented (see the changelog).
-**Still open in Phase 2:** HD media / captions / image editing, locked chats, group per-member ticks, voice transcripts, "Keep" for disappearing messages.
+**2F ✅ built (Oct 2026), awaiting your test run:** group per-member ticks with a "Message info" panel, voice-note waveforms, on-device voice-note transcripts (optional: `npm run setup:transcripts`), and "Keep" for disappearing messages. API checks: `npm run test:api:2f`. Not yet run or browser-tested; the transcript engine is the least certain part (see the changelog).
+**Still open in Phase 2:** HD media / captions / image editing, locked chats.
 **2D ✅ built (Oct 2026), awaiting your test run:** link previews (server-side, SSRF-guarded), cross-chat search, media / docs / links gallery, pin (≤3) / archive / mute for chats. API checks: `npm run test:api:2d` (two modes, see `tests/README.md`). Not yet browser-tested.
 **2C ✅ built (Oct 2026), awaiting your test run:** drafts, offline send queue with retry (no duplicates: idempotent `clientId`), infinite scroll (also jumps to old pins). API checks: `npm run test:api:2c`. Not yet browser-tested.
 

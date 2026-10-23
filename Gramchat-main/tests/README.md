@@ -95,3 +95,22 @@ code as "close"), and there is no browser test for the new screens. Quick manual
 and check the timer icon and the other person's toast; send a view-once photo, open it on the other account, close it, and
 check both sides now say *Opened* and the sender can't open it; try Reply / Forward on it (they should be missing); send a
 view-once voice note.
+
+## Phase 2F suite
+
+`npm run test:api:2f` (file `tests/phase2f-e2e.mjs`) covers group per-member ticks (delivered when a device connects, read when someone
+opens the group, the counts and the live `groupReceipt` events, "Message info", and the read-receipt privacy rules: someone with
+receipts off never shows as having read, a sender with receipts off sees no reads), voice-note waveforms (kept, forwarded, bad ones
+dropped, none on view-once), and Keep (who can keep and un-keep, what can't be kept, the fresh countdown after un-keeping).
+
+One check needs the short-timer server of the 2E suite: **a kept message really surviving its expiry**. Start the server with
+`DISAPPEAR_ALLOW_SHORT_TIMERS=1` and `DISAPPEAR_SWEEP_SECONDS=2` (see the 2E section above; never on a real server) and run with `SHORT=1`.
+On a normal server that one check is skipped and says so.
+
+Not covered: **voice-note transcripts**. They run entirely in the browser, so there is nothing for an API test to call. Manual check:
+run `npm run setup:transcripts` (needs internet once), `npm run build`, restart, turn on *Settings → Voice-note transcripts*, send a
+voice note, tap *Transcribe* on it (the first time the model loads, a progress percentage shows). Also check that it is NOT offered
+on a view-once voice note, that the text disappears from a note once it is deleted for everyone, and that nothing is requested from
+any other site (browser dev tools → Network: only your own server's address). Browser check for the rest, with three accounts: send in a
+group and watch the ticks go ✓ → ✓✓ → ✓✓ Seen as each person opens it, tap them for the panel; record a voice note and drag on
+its bars; keep a message in a chat with a timer, un-keep it from the other account.

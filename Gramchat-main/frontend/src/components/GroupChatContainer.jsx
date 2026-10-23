@@ -2,8 +2,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useGroupStore } from "../store/useGroupStore";
 import { useAuthStore } from "../store/useAuthStore";
 import { formatMessageTime } from "../lib/utils";
-import { timerLabel } from "../lib/messageRules";
+import { timerLabel, groupTick } from "../lib/messageRules";
 import DisappearingModal from "./DisappearingModal";
+import MessageInfoModal from "./MessageInfoModal";
 import ViewOnceBubble from "./ViewOnceBubble";
 import MessageInput from "./MessageInput";
 import { REACTION_EMOJIS } from "../constants/emoji";
@@ -94,6 +95,7 @@ const GroupChatContainer = () => {
   const [showInfo, setShowInfo] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
   const [showTimer, setShowTimer] = useState(false);
+  const [infoFor, setInfoFor] = useState(null); // the message whose "Message info" is open (from the ticks under it)
   const [editingId, setEditingId] = useState(null);
   const [flashId, setFlashId] = useState(null); // the message a search result or gallery tap just jumped to
   const focus = useGroupStore((s) => s.focus);
@@ -113,7 +115,7 @@ const GroupChatContainer = () => {
   const lastHasPreview = !!shown[shown.length - 1]?.linkPreview; // the card arrives after the message and makes it taller
   useEffect(() => {
     if (groupId) {
-      getGroupMessages(groupId);
+      getGroupMessages(groupId).then(() => useGroupStore.getState().markRead(groupId)); // opening the group reads it
       getPinned(groupId);
       setEditingId(null);
     }
@@ -307,6 +309,16 @@ const GroupChatContainer = () => {
                 </div>
 
                 <PendingFooter message={message} />
+                {/* Per-member ticks (Phase 2F): tap for who received / read it */}
+                {isOwn && !message.pending && !message.deletedForEveryone && (() => {
+                  const tick = groupTick(message.ticks);
+                  return (
+                    <button type="button" onClick={() => setInfoFor(message)} title="Message info"
+                      className={`chat-footer text-xs mt-0.5 text-left hover:underline ${tick.state === "read" ? "text-primary opacity-90" : "opacity-50"}`}>
+                      {tick.label}
+                    </button>
+                  );
+                })()}
                 {!message.deletedForEveryone && !message.pending && (
                   <ReactionBar reactions={message.reactions || []} onReact={handleReact}
                     messageId={message._id} authUserId={authUser._id} />
@@ -332,6 +344,7 @@ const GroupChatContainer = () => {
 
       <MessageInput key={selectedGroup._id} store="group" groupId={selectedGroup._id} />
 
+      {infoFor && <MessageInfoModal message={groupMessages.find((m) => m._id === infoFor._id) || infoFor} onClose={() => setInfoFor(null)} />}
       {showTimer && (
         <DisappearingModal
           title={selectedGroup.name}

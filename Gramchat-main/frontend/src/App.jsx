@@ -15,7 +15,8 @@ import { useContactStore } from "./store/useContactStore";
 import { useOutboxStore } from "./store/useOutboxStore";
 import { useChatPrefsStore, prefKey, isMuted } from "./store/useChatPrefsStore";
 import { useDraftStore } from "./store/useDraftStore";
-import { useEffect, useMemo } from "react";
+import { useTranscriptStore } from "./store/useTranscriptStore";
+import { useEffect, useMemo, useRef } from "react";
 import { Loader } from "lucide-react";
 import { Toaster } from "react-hot-toast";
 import { openChat } from "./lib/openChat";
@@ -27,6 +28,7 @@ const App = () => {
   const conversations = useChatStore((s) => s.conversations);
   const groupUnreadMap = useGroupStore((s) => s.groupUnread);
   const prefs = useChatPrefsStore((s) => s.prefs);
+  const hadUser = useRef(false); // someone was signed in (so a missing user now means a logout, not a page that is still loading)
   // Unread messages in the tab title: muted chats don't count
   const unreadTotal = useMemo(() => {
     let n = 0;
@@ -41,7 +43,7 @@ const App = () => {
 
   // When logged out (or the session expires), forget everything about the previous account
   useEffect(() => {
-    if (authUser) return;
+    if (authUser) { hadUser.current = true; return; }
     useChatStore.setState({ users: [], messages: [], selectedUser: null, conversations: {}, timers: {}, usersLoaded: false, replyingTo: null, isTyping: false });
     useGroupStore.setState({ groups: [], selectedGroup: null, groupMessages: [], groupUnread: {}, replyingTo: null });
     useContactStore.setState({ contacts: [], incoming: [], outgoing: [], blocked: [] });
@@ -49,6 +51,8 @@ const App = () => {
     useOutboxStore.getState().reset();
     useDraftStore.getState().reset();
     useChatPrefsStore.getState().reset();
+    // Voice-note transcripts made on this device are wiped when someone signs out, so nothing is left for the next person
+    if (hadUser.current) { hadUser.current = false; useTranscriptStore.getState().reset(); }
   }, [authUser]);
 
   // Signed in: bring back this account's unsent messages and drafts
@@ -59,6 +63,7 @@ const App = () => {
     useOutboxStore.getState().load(myId);
     useChatPrefsStore.getState().load();
     useChatStore.getState().loadTimers();
+    useTranscriptStore.getState().init(); // is the on-device speech engine installed on this server?
   }, [myId]);
 
   // Session-wide realtime handlers (unread badges, live updates for chats that aren't open)

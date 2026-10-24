@@ -16,7 +16,7 @@ import { notifyDM, notifyGroup } from "../lib/push.js";
 import { schedulePreview, refreshPreviewAfterEdit } from "../lib/linkPreviewService.js";
 import { notExpired, expiryFor, dmDisappearAfter } from "../lib/disappearing.js";
 import { LINK_TTL_MS, WIPE_AFTER_OPEN_MS, signViewLink, mediaFileOf, otherMemberIds, wipeViewOnceMedia } from "../lib/viewOnce.js";
-import { deliveredNow, infoFor } from "../lib/groupReceipts.js";
+import { deliveredNow, freshTicks, infoFor } from "../lib/groupReceipts.js";
 
 const PERSON_FIELDS = "username fullName profilePic"; // never email / password
 const same = (a, b) => !!a && !!b && a.toString() === b.toString();
@@ -491,6 +491,8 @@ export const forwardMessage = async (req, res) => {
           group.lastMessage = msg._id;
           await group.save();
           emitToGroup(group._id, "newGroupMessage", { groupId: group._id, message: forViewer(msg, me) });
+          // The forwarder's devices need the tick counts too (a normal send gets them in the HTTP answer; a forward's answer is only a summary)
+          emitToUser(me, "groupReceipt", { groupId: group._id.toString(), updates: [{ messageId: msg._id.toString(), ticks: freshTicks(group, msg) }] });
           notifyGroup(msg, req.user, group);
         } else {
           const msg = await Message.create({ senderId: me, receiverId: t.id, ...fields, expiresAt: expiryFor(await dmDisappearAfter(me, t.id)), deliveredAt: isUserOnline(t.id) ? new Date() : undefined });

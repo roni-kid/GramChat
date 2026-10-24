@@ -142,7 +142,14 @@ export const sendGroupMessage = async (req, res) => {
     group.lastMessage = newMessage._id;
     await group.save();
 
-    emitToGroup(group._id, "newGroupMessage", { groupId: group._id, message: forViewer(newMessage, senderId) });
+    // The sender's devices get the message with the idempotency key they sent (the app uses it to hide its "Sending…" bubble) and
+    // their tick counts; everyone else gets it WITHOUT the key, which is the sender's business only (see forViewer).
+    const mineView = forViewer(newMessage, senderId);
+    const othersView = { ...mineView };
+    delete othersView.clientId;
+    emitToUser(senderId, "newGroupMessage", { groupId: group._id, message: mineView });
+    emitToUser(senderId, "groupReceipt", { groupId: group._id.toString(), updates: [{ messageId: newMessage._id.toString(), ticks: freshTicks(group, newMessage) }] }); // also for the sender's other tabs
+    emitToGroup(group._id, "newGroupMessage", { groupId: group._id, message: othersView }); // the sender receives this one too; the app ignores a message it already has
     notifyGroup(newMessage, req.user, group); // web push to members who enabled it
     schedulePreview(newMessage, req.user); // link card follows as a `messagePreview` event
     res.status(201).json({ ...forViewer(newMessage, senderId), ticks: freshTicks(group, newMessage) });

@@ -20,6 +20,11 @@
 - The sweeper now deletes an expired message only if it is *still* expired at that moment, so a message kept during a sweep survives.
 - Settings → Read receipts now mentions groups.
 
+### Fixed (found in a read-through of the 2E and 2F code)
+- A group message you **forward** now shows its ticks straight away. Before, the forwarder's screen stayed on "✓ Sent" until someone read it, because the answer to a forward is only a summary and the socket copy carried no tick counts.
+- A group message sent from another tab or device of yours also gets its ticks straight away (same cause).
+- The sender's private idempotency key (`clientId`) was included in the live group broadcast, so every member received it. It now goes only to the sender's own devices, as `forViewer` always intended. (Harmless in practice, since a key only works for its own sender, but it should never have left the sender.)
+
 ### Known limits
 - **Not run yet.** As before, I could write and read the code but not start your server or browser from here: nothing has been executed, not even a build or lint pass. Do this first: `npm run build --prefix frontend`, `npm run lint --prefix frontend`, restart the backend, `npm run test:api:2f` (both modes for the Keep-survives-expiry check, see `tests/README.md`), and click through a group with three accounts.
 - **Transcripts are the least certain part.** The model runtime is loaded in a way I could not test (a static module worker, the runtime's WebAssembly files from `/vendor/transcribe/`, the model from `/models/`). If *Transcribe* shows an error, open the browser console, and check that `frontend/public/vendor/transcribe/` has `transformers.min.js` plus `ort-wasm*` files and `frontend/public/models/<model>/` has `config.json` and an `onnx` folder. Safari and older phones may decode or run slower or not at all. A 5-minute note on the tiny model can take a minute or more on a laptop, longer on a phone. Transcripts can be wrong (names, noise, accents), and the models sometimes invent a word or two for silence.

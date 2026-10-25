@@ -120,7 +120,10 @@ export const sendGroupMessage = async (req, res) => {
 
     const { fields, error } = await buildMessageFields(req.body);
     if (error) return res.status(400).json({ message: error });
-    if (!(await replyBelongsTo(fields.replyTo, { groupId }))) return res.status(400).json({ message: "Invalid reply target" });
+    if (!(await replyBelongsTo(fields.replyTo, { groupId }))) {
+      [fields.image, fields.fileUrl].forEach((f) => f && deleteUpload(f)); // the files were already stored: don't leave them behind
+      return res.status(400).json({ message: "Invalid reply target" });
+    }
 
     let newMessage;
     try {
@@ -203,9 +206,16 @@ export const removeGroupMember = async (req, res) => {
     group.members = group.members.filter((m) => m.toString() !== userId);
 
     if (group.members.length === 0) {
+      // Nobody is left: delete the group's messages AND their files (otherwise the uploads stay on disk forever)
+      const withFiles = await Message.find({
+        groupId: group._id,
+        $or: [{ image: { $type: "string" } }, { fileUrl: { $type: "string" } }, { "linkPreview.image": { $type: "string" } }],
+      }).select("image fileUrl linkPreview.image").lean();
       await Group.deleteOne({ _id: group._id });
       await Message.deleteMany({ groupId: group._id });
       await ChatPref.deleteMany({ kind: "group", targetId: group._id });
+      withFiles.forEach((m) => [m.image, m.fileUrl, m.linkPreview?.image].forEach((f) => f && deleteUpload(f)));
+      if (group.groupPic) deleteUpload(group.groupPic);
       emitToUser(userId, "removedFromGroup", { groupId });
       removeUserFromGroup(userId, group._id);
       return res.status(200).json({ ...group.toObject(), members: [] });

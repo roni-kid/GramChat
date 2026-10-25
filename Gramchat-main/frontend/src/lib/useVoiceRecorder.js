@@ -58,7 +58,13 @@ export function useVoiceRecorder({ onLimit } = {}) {
       throw new Error(e?.name === "NotAllowedError" ? "Microphone access was blocked. Allow it in your browser's site settings." : "Couldn't open the microphone");
     }
     const mime = pickMime();
-    const r = new MediaRecorder(s, mime ? { mimeType: mime } : undefined);
+    let r;
+    try {
+      r = new MediaRecorder(s, mime ? { mimeType: mime } : undefined);
+    } catch {
+      s.getTracks().forEach((t) => t.stop()); // don't leave the microphone switched on if the recorder can't start
+      throw new Error("This browser can't record audio");
+    }
     chunks.current = [];
     r.ondataavailable = (e) => { if (e.data?.size) chunks.current.push(e.data); };
     r.start(500);

@@ -24,6 +24,12 @@ import { getClientOrigins, getPort, validateRequiredEnv } from "./lib/config.js"
 dotenv.config();
 validateRequiredEnv();
 
+// Safety net: one failed background task (a database hiccup in a fire-and-forget call, say) is logged instead of taking down
+// the whole server, which is what Node does with an unhandled promise rejection by default.
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason instanceof Error ? reason.message : reason);
+});
+
 const PORT = getPort();
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(here, "../../frontend/dist");

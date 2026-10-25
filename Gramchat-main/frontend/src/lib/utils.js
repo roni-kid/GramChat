@@ -1,5 +1,6 @@
 export function formatMessageTime(date) {
-  return new Date(date).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  // hourCycle "h23" (not hour12:false): some browsers print midnight as "24:05" with hour12:false
+  return new Date(date).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 }
 
 // "Today" → time, "Yesterday", otherwise a short date. Used in the chat list.

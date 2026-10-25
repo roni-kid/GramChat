@@ -104,21 +104,17 @@ const isMember = async (groupId, userId) => {
   return !!(await Group.exists({ _id: groupId, members: userId }));
 };
 
-io.on("connection", async (socket) => {
+io.on("connection", (socket) => {
   const userId = socket.data.userId;
   socket.join(userRoom(userId));
 
-  // Join the rooms of every group this user belongs to (server decides, client can't choose)
-  const groups = await Group.find({ members: userId }).select("_id").lean();
-  groups.forEach((g) => socket.join(groupRoom(g._id.toString())));
-
-  refreshPresence(userId);
-  markDelivered(userId);
-  markGroupDelivered(userId);
-
   // ── Typing (DM) ──
   const toContact = async (to, event, payload) => {
-    if (typeof to === "string" && (await areContacts(userId, to))) emitToUser(to, event, payload);
+    try {
+      if (typeof to === "string" && (await areContacts(userId, to))) emitToUser(to, event, payload);
+    } catch (e) {
+      console.log(`socket ${event} failed:`, e.message); // a database hiccup must never take the server down
+    }
   };
   socket.on("typing", ({ receiverId } = {}) => toContact(receiverId, "userTyping", { senderId: userId }));
   socket.on("stopTyping", ({ receiverId } = {}) => toContact(receiverId, "userStopTyping", { senderId: userId }));
@@ -133,14 +129,23 @@ io.on("connection", async (socket) => {
 
   // Kept for client compatibility, but membership is verified server-side.
   socket.on("joinGroup", async ({ groupId } = {}) => {
-    if (await isMember(groupId, userId)) socket.join(groupRoom(groupId));
+    try {
+      if (await isMember(groupId, userId)) socket.join(groupRoom(groupId));
+    } catch (e) {
+      console.log("joinGroup failed:", e.message);
+    }
   });
   socket.on("leaveGroup", () => {});
 
   // ── WebRTC signalling. Caller identity/name/photo come from the server, not the client ──
   socket.on("call:offer", async ({ to, offer, callType } = {}) => {
     if (typeof to !== "string" || !offer || !["voice", "video"].includes(callType)) return;
-    if (!(await areContacts(userId, to)) || !isUserOnline(to)) return socket.emit("call:unavailable", { to });
+    try {
+      if (!(await areContacts(userId, to)) || !isUserOnline(to)) return socket.emit("call:unavailable", { to });
+    } catch (e) {
+      console.log("call:offer failed:", e.message);
+      return socket.emit("call:unavailable", { to });
+    }
     emitToUser(to, "call:incoming", {
       from: userId,
       offer,
@@ -157,6 +162,21 @@ io.on("connection", async (socket) => {
     // The adapter removes this socket from its rooms *after* this event, so recompute next tick.
     setImmediate(() => refreshPresence(userId));
   });
+
+  // Join the group rooms (the server decides, the client can't choose) and run the catch-up sweeps AFTER all handlers above are
+  // registered. Awaiting the database first used to drop any event the client sent in that gap, and a database error here
+  // was an unhandled promise rejection.
+  (async () => {
+    try {
+      const groups = await Group.find({ members: userId }).select("_id").lean();
+      groups.forEach((g) => socket.join(groupRoom(g._id.toString())));
+    } catch (e) {
+      console.log("joining group rooms failed:", e.message);
+    }
+    refreshPresence(userId);
+    markDelivered(userId);
+    markGroupDelivered(userId);
+  })();
 });
 
 export { io, app, server };

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import toast from "react-hot-toast";
 import { useAuthStore } from "../store/useAuthStore";
 import { AtSign, Camera, Check, Pencil, User, X } from "lucide-react";
 
@@ -11,9 +12,12 @@ const ProfilePage = () => {
   const [newFullName, setNewFullName] = useState(authUser?.fullName || "");
 
   const handleImageUpload = async (e) => {
-    const file = e.target.files[0];
+    const input = e.target;
+    const file = input.files[0];
+    input.value = ""; // so choosing the same file again still fires onChange
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) return;
+    if (!file.type.startsWith("image/")) return toast.error("Please choose an image file");
+    if (file.size > 5 * 1024 * 1024) return toast.error("Image must be under 5MB");
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = async () => {

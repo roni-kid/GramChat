@@ -6,6 +6,9 @@ import { normalizeUsername, usernameError } from "../lib/username.js";
 import { refreshPresence } from "../lib/socket.js";
 
 const isStr = (v) => typeof v === "string";
+// A REAL bcrypt hash (of a random value) to compare against when the account doesn't exist, so an unknown username costs the
+// same ~60 ms as a wrong password. (A malformed hash makes bcryptjs return instantly, which reveals which usernames exist.)
+const DUMMY_HASH = bcrypt.hashSync(`dummy-${Math.random()}`, 10);
 const publicUser = (u) => ({
   _id: u._id,
   username: u.username,
@@ -55,7 +58,7 @@ export const login = async (req, res) => {
     const looksLikeEmail = /^[^@\s]+@[^@\s]+$/.test(ident);
     const user = await User.findOne(looksLikeEmail ? { email: ident } : { username: normalizeUsername(ident) });
     // Always run a bcrypt compare so response time doesn't reveal whether the account exists
-    const hash = user?.password || "$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv";
+    const hash = user?.password || DUMMY_HASH;
     const ok = await bcrypt.compare(password, hash);
     if (!user || !ok) return res.status(400).json({ message: "Invalid credentials" });
 
@@ -73,11 +76,17 @@ export const logout = (req, res) => {
 };
 
 export const checkUsername = async (req, res) => {
-  const uname = normalizeUsername(req.query.username);
-  const err = usernameError(uname);
-  if (err) return res.status(200).json({ available: false, reason: err });
-  const taken = await User.exists({ username: uname, ...(req.user ? { _id: { $ne: req.user._id } } : {}) });
-  res.status(200).json({ available: !taken, reason: taken ? "That username is taken" : null });
+  try {
+    const uname = normalizeUsername(req.query.username);
+    const err = usernameError(uname);
+    if (err) return res.status(200).json({ available: false, reason: err });
+    const taken = await User.exists({ username: uname });
+    res.status(200).json({ available: !taken, reason: taken ? "That username is taken" : null });
+  } catch (error) {
+    // Express 4 doesn't catch errors thrown in async handlers: without this a database hiccup leaves the request hanging
+    console.log("Error in checkUsername:", error.message);
+    res.status(500).json({ message: "Internal server error" });
+  }
 };
 
 export const updateUsername = async (req, res) => {

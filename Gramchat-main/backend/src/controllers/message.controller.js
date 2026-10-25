@@ -130,6 +130,7 @@ export const sendMessage = async (req, res) => {
     const { fields, error } = await buildMessageFields(req.body);
     if (error) return res.status(400).json({ message: error });
     if (!(await replyBelongsTo(fields.replyTo, { a: senderId, b: receiverId }))) {
+      [fields.image, fields.fileUrl].forEach((f) => f && deleteUpload(f)); // the files were already stored: don't leave them behind
       return res.status(400).json({ message: "Invalid reply target" });
     }
 

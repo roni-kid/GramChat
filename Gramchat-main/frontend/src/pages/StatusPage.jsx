@@ -90,7 +90,10 @@ const StatusViewer = ({ statusGroup, onClose, onView }) => {
   const [idx, setIdx] = useState(0);
   const { authUser } = useAuthStore();
   const { deleteStatus } = useStatusStore();
-  const status = statusGroup.items[idx];
+  const items = statusGroup.items;
+  // The group follows the store, so deleting the status you're looking at moves on instead of leaving it on screen
+  const at = Math.min(idx, items.length - 1);
+  const status = items[at];
 
   const statusId = status?._id;
   useEffect(() => {
@@ -100,11 +103,11 @@ const StatusViewer = ({ statusGroup, onClose, onView }) => {
   // Auto-advance after 5 s; after the last slide, close the viewer
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (idx < statusGroup.items.length - 1) setIdx(idx + 1);
+      if (at < items.length - 1) setIdx(at + 1);
       else onClose();
     }, 5000);
     return () => clearTimeout(timer);
-  }, [idx, statusGroup.items.length, onClose]);
+  }, [at, items.length, onClose]);
 
   const isOwn = (status?.userId?._id || status?.userId) === authUser._id;
   const viewedCount = status?.viewedBy?.length || 0;
@@ -113,10 +116,10 @@ const StatusViewer = ({ statusGroup, onClose, onView }) => {
     <div className="fixed inset-0 bg-black z-50 flex items-center justify-center" onClick={onClose}>
       <div className="relative w-full max-w-sm h-full max-h-[700px]" onClick={(e) => e.stopPropagation()}>
         <div className="absolute top-3 left-3 right-3 z-10 flex gap-1">
-          {statusGroup.items.map((_, i) => (
+          {items.map((_, i) => (
             <div key={i} className="flex-1 h-0.5 rounded-full bg-white/30 overflow-hidden">
               <div className="h-full bg-white"
-                style={i < idx ? { width: "100%" } : i === idx ? { animation: "status-progress 5s linear forwards" } : { width: 0 }} />
+                style={i < at ? { width: "100%" } : i === at ? { animation: "status-progress 5s linear forwards" } : { width: 0 }} />
             </div>
           ))}
         </div>
@@ -145,9 +148,9 @@ const StatusViewer = ({ statusGroup, onClose, onView }) => {
           )}
         </div>
         <button className="absolute left-0 top-1/2 -translate-y-1/2 w-1/3 h-full opacity-0"
-          onClick={() => setIdx((p) => Math.max(0, p - 1))} />
+          onClick={() => setIdx(Math.max(0, at - 1))} />
         <button className="absolute right-0 top-1/2 -translate-y-1/2 w-1/3 h-full opacity-0"
-          onClick={() => setIdx((p) => Math.min(statusGroup.items.length - 1, p + 1))} />
+          onClick={() => setIdx(Math.min(items.length - 1, at + 1))} />
         {isOwn && (
           <div className="absolute bottom-6 left-0 right-0 flex justify-center">
             <div className="flex items-center gap-1.5 bg-black/40 rounded-full px-3 py-1.5">
@@ -165,7 +168,7 @@ const StatusPage = () => {
   const { getStatuses, subscribeToStatuses, unsubscribeFromStatuses, viewStatus, getStatusesByUser } = useStatusStore();
   const { authUser } = useAuthStore();
   const [showCreate, setShowCreate] = useState(false);
-  const [viewingGroup, setViewingGroup] = useState(null);
+  const [viewingId, setViewingId] = useState(null); // whose statuses are open (the group itself is looked up live, below)
 
   useEffect(() => {
     getStatuses();
@@ -173,11 +176,12 @@ const StatusPage = () => {
     return () => unsubscribeFromStatuses();
   }, [getStatuses, subscribeToStatuses, unsubscribeFromStatuses]);
 
-  const closeViewer = useCallback(() => setViewingGroup(null), []);
+  const closeViewer = useCallback(() => setViewingId(null), []);
 
   const grouped = getStatusesByUser();
   const myGroup = grouped.find((g) => (g.user?._id || g.user) === authUser._id);
   const othersGroups = grouped.filter((g) => (g.user?._id || g.user) !== authUser._id);
+  const viewingGroup = viewingId ? grouped.find((g) => (g.user?._id || g.user) === viewingId) : null;
 
   return (
     <div className="h-screen pt-20">
@@ -192,7 +196,7 @@ const StatusPage = () => {
       <section className="mb-6">
         <h2 className="text-xs text-base-content/50 uppercase tracking-wider font-medium mb-3">My Status</h2>
         <div className="flex items-center gap-3 p-3 bg-base-200 rounded-2xl cursor-pointer hover:bg-base-300 transition-colors"
-          onClick={() => myGroup ? setViewingGroup(myGroup) : setShowCreate(true)}>
+          onClick={() => myGroup ? setViewingId(authUser._id) : setShowCreate(true)}>
           <div className={`relative shrink-0 ${myGroup ? "ring-2 ring-primary ring-offset-2 ring-offset-base-200 rounded-full" : ""}`}>
             <img src={authUser.profilePic || "/avatar.png"} alt="me" className="size-14 rounded-full object-cover" />
             {!myGroup && (
@@ -218,7 +222,7 @@ const StatusPage = () => {
               return (
                 <div key={userId}
                   className="flex items-center gap-3 p-3 bg-base-200 rounded-2xl cursor-pointer hover:bg-base-300 transition-colors"
-                  onClick={() => setViewingGroup(group)}>
+                  onClick={() => setViewingId(userId)}>
                   <div className={`relative shrink-0 ${hasUnviewed ? "ring-2 ring-primary ring-offset-2 ring-offset-base-200 rounded-full" : "ring-2 ring-base-300 ring-offset-2 ring-offset-base-200 rounded-full"}`}>
                     <img src={group.user?.profilePic || "/avatar.png"} alt={group.user?.fullName} className="size-14 rounded-full object-cover" />
                   </div>

@@ -1,6 +1,6 @@
 # Gramchat 💬
 
-A private, self-hostable WhatsApp-style messenger: React + Node + MongoDB + Socket.io. You run the server, you own the data.
+A private, self-hostable WhatsApp-style messenger. You run the server, you own the data.
 No Cloudinary, no third-party services, no ads.
 
 > Built by **RoniKid** & **Modestus**. Audit & hardening Oct 2026 (see `docs/AUDIT.md`).

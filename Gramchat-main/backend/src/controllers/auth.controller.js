@@ -139,15 +139,22 @@ export const updateProfile = async (req, res) => {
     const { profilePic, fullName } = req.body || {};
     const updates = {};
 
-    if (profilePic) updates.profilePic = (await saveDataUrl(profilePic, { maxBytes: 5 * 1024 * 1024, only: "image/" })).url;
+    // Validate the name BEFORE storing the picture: a rejected request must not leave an upload behind
     if (isStr(fullName) && fullName.trim()) {
       if (fullName.trim().length > 60) return res.status(400).json({ message: "Name is too long (max 60)" });
       updates.fullName = fullName.trim();
     }
+    if (profilePic) updates.profilePic = (await saveDataUrl(profilePic, { maxBytes: 5 * 1024 * 1024, only: "image/" })).url;
     if (Object.keys(updates).length === 0) return res.status(400).json({ message: "Nothing to update" });
 
     const old = req.user.profilePic;
-    const updatedUser = await User.findByIdAndUpdate(req.user._id, updates, { new: true });
+    let updatedUser;
+    try {
+      updatedUser = await User.findByIdAndUpdate(req.user._id, updates, { new: true });
+    } catch (e) {
+      if (updates.profilePic) deleteUpload(updates.profilePic);
+      throw e;
+    }
     if (updates.profilePic && old) deleteUpload(old);
     res.status(200).json(publicUser(updatedUser)); // never includes the password hash
   } catch (error) {

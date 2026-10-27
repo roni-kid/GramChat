@@ -26,14 +26,15 @@ const statusSchema = new mongoose.Schema(
         ref: "User",
       },
     ],
-    // Expires 24 hours after creation
+    // Expires 24 hours after creation. Lists already hide anything past this time; the sweeper (lib/disappearing.js) deletes the row
+    // AND its picture file shortly after. (A MongoDB TTL index used to delete the rows by itself, which left the pictures on disk forever.
+    // The plain index below is created by lib/migrate.js, which also drops the old TTL index.)
     expiresAt: {
       type: Date,
       default: () => new Date(Date.now() + 24 * 60 * 60 * 1000),
-      index: { expires: 0 }, // MongoDB TTL index auto-deletes
     },
   },
-  { timestamps: true }
+  { timestamps: true, autoIndex: false }
 );
 
 const Status = mongoose.model("Status", statusSchema);

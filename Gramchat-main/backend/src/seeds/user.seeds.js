@@ -1,4 +1,4 @@
-import { config } from "dotenv";
+import "../lib/loadEnv.js";
 import { connectDB } from "../lib/db.js";
 import bcrypt from "bcryptjs";
 import Contact from "../models/contact.model.js";
@@ -6,8 +6,6 @@ import { suggestUsername } from "../lib/username.js";
 import { pairKey } from "../lib/relations.js";
 import { runMigrations } from "../lib/migrate.js";
 import User from "../models/user.model.js";
-
-config();
 
 const seedUsers = [
   // Female Users

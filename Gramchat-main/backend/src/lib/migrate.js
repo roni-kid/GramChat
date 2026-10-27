@@ -2,6 +2,7 @@
 import User from "../models/user.model.js";
 import Message from "../models/message.model.js";
 import Contact from "../models/contact.model.js";
+import Status from "../models/status.model.js";
 import { suggestUsername } from "./username.js";
 import { pairKey } from "./relations.js";
 import mongoose from "mongoose";
@@ -30,7 +31,20 @@ export const runMigrations = async () => {
   }
   await User.collection.createIndex({ username: 1 }, { unique: true, name: "username_1" });
 
-  // 3. one-time: people who already chatted become contacts, so existing conversations keep working
+  // 3. Statuses: the old TTL index on `expiresAt` deleted expired rows by itself and left their pictures on disk. Drop it and keep a
+  // plain index instead: the sweeper (lib/disappearing.js) now deletes expired statuses together with their files.
+  try {
+    const old = (await Status.collection.indexes()).find((i) => i.name === "expiresAt_1" && i.expireAfterSeconds !== undefined);
+    if (old) {
+      await Status.collection.dropIndex("expiresAt_1");
+      console.log("[migrate] dropped the status TTL index (expired statuses are now swept together with their pictures)");
+    }
+  } catch {
+    /* the collection doesn't exist yet: nothing to drop */
+  }
+  await Status.collection.createIndex({ expiresAt: 1 }, { name: "expiresAt_1" });
+
+  // 4. one-time: people who already chatted become contacts, so existing conversations keep working
   const metaCol = mongoose.connection.collection("meta");
   if (!(await metaCol.findOne({ _id: "contacts_from_dms_v1" }))) {
     const msgs = await Message.find({ groupId: null, receiverId: { $ne: null } }).select("senderId receiverId").lean();

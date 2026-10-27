@@ -55,9 +55,12 @@ export const refreshPresence = async (userId) => {
 
 const parseCookies = (header = "") =>
   Object.fromEntries(
-    header.split(";").map((c) => c.trim()).filter(Boolean).map((c) => {
+    header.split(";").map((c) => c.trim()).filter((c) => c.includes("=")).map((c) => {
       const i = c.indexOf("=");
-      return [c.slice(0, i), decodeURIComponent(c.slice(i + 1))];
+      const raw = c.slice(i + 1);
+      let value = raw;
+      try { value = decodeURIComponent(raw); } catch { /* an unrelated, badly encoded cookie must not block the login cookie */ }
+      return [c.slice(0, i), value];
     })
   );
 
@@ -108,6 +111,20 @@ io.on("connection", (socket) => {
   const userId = socket.data.userId;
   socket.join(userRoom(userId));
 
+  // A malformed payload (`null`, a string, ...) must never throw out of a handler: in Socket.IO an exception inside an event listener is an
+  // uncaught exception and takes the whole server down. Every client event goes through `on`, which hands the handler a plain object
+  // and logs (instead of throwing) anything that goes wrong.
+  const on = (event, fn) =>
+    socket.on(event, (payload) => {
+      const fail = (e) => console.log(`socket ${event} failed:`, e?.message);
+      try {
+        const out = fn(payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {});
+        if (out && typeof out.catch === "function") out.catch(fail);
+      } catch (e) {
+        fail(e);
+      }
+    });
+
   // ── Typing (DM) ──
   const toContact = async (to, event, payload) => {
     try {
@@ -116,29 +133,25 @@ io.on("connection", (socket) => {
       console.log(`socket ${event} failed:`, e.message); // a database hiccup must never take the server down
     }
   };
-  socket.on("typing", ({ receiverId } = {}) => toContact(receiverId, "userTyping", { senderId: userId }));
-  socket.on("stopTyping", ({ receiverId } = {}) => toContact(receiverId, "userStopTyping", { senderId: userId }));
+  on("typing", ({ receiverId }) => toContact(receiverId, "userTyping", { senderId: userId }));
+  on("stopTyping", ({ receiverId }) => toContact(receiverId, "userStopTyping", { senderId: userId }));
 
   // ── Typing (group): only members may emit into a group room ──
-  socket.on("groupTyping", ({ groupId } = {}) => {
-    if (socket.rooms.has(groupRoom(groupId))) socket.to(groupRoom(groupId)).emit("groupUserTyping", { senderId: userId, groupId });
+  on("groupTyping", ({ groupId }) => {
+    if (typeof groupId === "string" && socket.rooms.has(groupRoom(groupId))) socket.to(groupRoom(groupId)).emit("groupUserTyping", { senderId: userId, groupId });
   });
-  socket.on("groupStopTyping", ({ groupId } = {}) => {
-    if (socket.rooms.has(groupRoom(groupId))) socket.to(groupRoom(groupId)).emit("groupUserStopTyping", { senderId: userId, groupId });
+  on("groupStopTyping", ({ groupId }) => {
+    if (typeof groupId === "string" && socket.rooms.has(groupRoom(groupId))) socket.to(groupRoom(groupId)).emit("groupUserStopTyping", { senderId: userId, groupId });
   });
 
   // Kept for client compatibility, but membership is verified server-side.
-  socket.on("joinGroup", async ({ groupId } = {}) => {
-    try {
-      if (await isMember(groupId, userId)) socket.join(groupRoom(groupId));
-    } catch (e) {
-      console.log("joinGroup failed:", e.message);
-    }
+  on("joinGroup", async ({ groupId }) => {
+    if (await isMember(groupId, userId)) socket.join(groupRoom(groupId));
   });
   socket.on("leaveGroup", () => {});
 
   // ── WebRTC signalling. Caller identity/name/photo come from the server, not the client ──
-  socket.on("call:offer", async ({ to, offer, callType } = {}) => {
+  on("call:offer", async ({ to, offer, callType }) => {
     if (typeof to !== "string" || !offer || !["voice", "video"].includes(callType)) return;
     try {
       if (!(await areContacts(userId, to)) || !isUserOnline(to)) return socket.emit("call:unavailable", { to });
@@ -153,10 +166,10 @@ io.on("connection", (socket) => {
       callerInfo: { fullName: socket.data.user.fullName, profilePic: socket.data.user.profilePic },
     });
   });
-  socket.on("call:answer", ({ to, answer } = {}) => toContact(to, "call:answered", { from: userId, answer }));
-  socket.on("call:reject", ({ to } = {}) => toContact(to, "call:rejected", { from: userId }));
-  socket.on("call:end", ({ to } = {}) => toContact(to, "call:ended", { from: userId }));
-  socket.on("call:ice-candidate", ({ to, candidate } = {}) => toContact(to, "call:ice-candidate", { from: userId, candidate }));
+  on("call:answer", ({ to, answer }) => toContact(to, "call:answered", { from: userId, answer }));
+  on("call:reject", ({ to }) => toContact(to, "call:rejected", { from: userId }));
+  on("call:end", ({ to }) => toContact(to, "call:ended", { from: userId }));
+  on("call:ice-candidate", ({ to, candidate }) => toContact(to, "call:ice-candidate", { from: userId, candidate }));
 
   socket.on("disconnect", () => {
     // The adapter removes this socket from its rooms *after* this event, so recompute next tick.

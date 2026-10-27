@@ -1,5 +1,5 @@
+import "./lib/loadEnv.js"; // must stay the first import: it loads backend/.env before other modules read process.env
 import express from "express";
-import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import path from "path";
@@ -21,7 +21,6 @@ import { runMigrations } from "./lib/migrate.js";
 import { app, server } from "./lib/socket.js";
 import { getClientOrigins, getPort, validateRequiredEnv } from "./lib/config.js";
 
-dotenv.config();
 validateRequiredEnv();
 
 // Safety net: one failed background task (a database hiccup in a fire-and-forget call, say) is logged instead of taking down
@@ -34,7 +33,11 @@ const PORT = getPort();
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(here, "../../frontend/dist");
 
-app.set("trust proxy", 1); // we sit behind a tunnel / reverse proxy when shared
+// We sit behind a tunnel / reverse proxy when shared, so one proxy hop is trusted by default (req.ip is what the rate limiters use).
+// If the server is reachable DIRECTLY (no proxy in front), set TRUST_PROXY=false: otherwise a client could fake its address
+// with an X-Forwarded-For header and get around the login / signup limits.
+const trustProxy = process.env.TRUST_PROXY;
+app.set("trust proxy", trustProxy === undefined || trustProxy === "" ? 1 : trustProxy === "false" ? false : /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy);
 app.disable("x-powered-by");
 
 app.use((_req, res, next) => {

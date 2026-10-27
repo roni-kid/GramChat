@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import PushSubscription from "../models/pushSubscription.model.js";
 import { mutedUserIds } from "./chatPrefs.js";
+import { BACKEND_ROOT } from "./loadEnv.js";
 
 let webpush = null;
 let publicKey = null;
@@ -23,7 +24,9 @@ export const initPush = async () => {
   let priv = process.env.VAPID_PRIVATE_KEY;
   if (!pub || !priv) {
     // No keys in .env: create them once and keep them in a file next to the server (never commit it).
-    const file = path.resolve(process.env.VAPID_FILE || "vapid.json");
+    // Relative paths are relative to the backend folder: starting the server from another folder must not create a second key file
+    // (new keys would silently break every device that already enabled notifications).
+    const file = path.resolve(BACKEND_ROOT, process.env.VAPID_FILE || "vapid.json");
     try {
       const saved = JSON.parse(fs.readFileSync(file, "utf8"));
       pub = saved.publicKey;

@@ -46,7 +46,13 @@ export const createStatus = async (req, res) => {
     if (bgColor != null && !COLOR_RE.test(bgColor)) return res.status(400).json({ message: "Invalid colour" });
 
     const imageUrl = image ? (await saveDataUrl(image, { maxBytes: 5 * 1024 * 1024, only: "image/" })).url : undefined;
-    const status = await Status.create({ userId, text: text?.trim() || undefined, image: imageUrl, bgColor: bgColor || "#1a1a2e" });
+    let status;
+    try {
+      status = await Status.create({ userId, text: text?.trim() || undefined, image: imageUrl, bgColor: bgColor || "#1a1a2e" });
+    } catch (e) {
+      if (imageUrl) deleteUpload(imageUrl); // the status wasn't stored: don't leave its picture on disk
+      throw e;
+    }
     await status.populate("userId", "fullName profilePic");
 
     if (req.user.privacy?.statusAudience !== "nobody") {
@@ -71,10 +77,10 @@ export const viewStatus = async (req, res) => {
     if (ownerId !== viewerId.toString() && !(await visibleAuthors(viewerId)).includes(ownerId)) {
       return res.status(404).json({ message: "Status not found" });
     }
-    if (!status.viewedBy.map(String).includes(viewerId.toString()) && ownerId !== viewerId.toString()) {
-      status.viewedBy.push(viewerId);
-      await status.save();
-      emitToUser(ownerId, "statusViewed", { statusId, viewerId: viewerId.toString() });
+    if (ownerId !== viewerId.toString()) {
+      // One atomic update: two quick views (or two devices) can't both add the viewer, and a concurrent save can't fail with a version error
+      const added = await Status.updateOne({ _id: status._id, viewedBy: { $ne: viewerId } }, { $addToSet: { viewedBy: viewerId } });
+      if (added.modifiedCount) emitToUser(ownerId, "statusViewed", { statusId, viewerId: viewerId.toString() });
     }
     res.status(200).json({ success: true });
   } catch (error) {

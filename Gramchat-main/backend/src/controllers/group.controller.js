@@ -4,7 +4,7 @@ import Message from "../models/message.model.js";
 import ChatPref from "../models/chatPref.model.js";
 import { emitToUser, emitToGroup, joinUserToGroup, removeUserFromGroup, isUserOnline } from "../lib/socket.js";
 import { saveDataUrl, deleteUpload, UploadError } from "../lib/storage.js";
-import { buildMessageFields, replyBelongsTo, readClientId, findSentByClientId, isDuplicateKeyError, POPULATE_REPLY } from "../lib/messageUtils.js";
+import { buildMessageFields, replyBelongsTo, readClientId, findSentByClientId, isDuplicateKeyError, filesOfFields, POPULATE_REPLY } from "../lib/messageUtils.js";
 import { isId } from "../middleware/validate.js";
 import { getContactIds } from "../lib/relations.js";
 import { forViewer } from "../lib/messageOps.js";
@@ -26,6 +26,8 @@ export const getMyGroups = async (req, res) => {
     res.status(200).json(groups.map((g) => {
       const o = g.toObject();
       if (o.lastMessage?.expiresAt && new Date(o.lastMessage.expiresAt) <= new Date()) o.lastMessage = null; // disappeared, not swept yet
+      // "Delete for me": a message I removed must not keep showing in my group list preview
+      if (o.lastMessage?.deletedFor?.some((id) => String(id) === String(req.user._id))) o.lastMessage = null;
       if (o.lastMessage) o.lastMessage = forViewer(o.lastMessage, req.user._id);
       return o;
     }));
@@ -121,7 +123,7 @@ export const sendGroupMessage = async (req, res) => {
     const { fields, error } = await buildMessageFields(req.body);
     if (error) return res.status(400).json({ message: error });
     if (!(await replyBelongsTo(fields.replyTo, { groupId }))) {
-      [fields.image, fields.fileUrl].forEach((f) => f && deleteUpload(f)); // the files were already stored: don't leave them behind
+      filesOfFields(fields).forEach((f) => deleteUpload(f)); // the files were already stored: don't leave them behind
       return res.status(400).json({ message: "Invalid reply target" });
     }
 
@@ -133,10 +135,9 @@ export const sendGroupMessage = async (req, res) => {
         deliveredTo: deliveredNow(group.members, senderId, isUserOnline), // members connected right now already have it
       });
     } catch (e) {
-      if (clientId && isDuplicateKeyError(e)) {
-        [fields.image, fields.fileUrl].forEach((f) => f && deleteUpload(f));
-        if (await replay()) return;
-      }
+      // The message was not stored, so this attempt's files are never used (any failure, not only a duplicate)
+      filesOfFields(fields).forEach((f) => deleteUpload(f));
+      if (clientId && isDuplicateKeyError(e) && (await replay())) return;
       throw e;
     }
     await newMessage.populate("senderId", MEMBER_FIELDS);

@@ -6,7 +6,7 @@ import Message from "../models/message.model.js";
 import { emitToUser, emitToGroup, isUserOnline } from "../lib/socket.js";
 import { areContacts, getContactIds } from "../lib/relations.js";
 import { UploadError, copyUpload, deleteUpload } from "../lib/storage.js";
-import { buildMessageFields, replyBelongsTo, readClientId, findSentByClientId, isDuplicateKeyError, POPULATE_REPLY, MAX_TEXT } from "../lib/messageUtils.js";
+import { buildMessageFields, replyBelongsTo, readClientId, findSentByClientId, isDuplicateKeyError, filesOfFields, POPULATE_REPLY, MAX_TEXT } from "../lib/messageUtils.js";
 import {
   loadAccessible, conversationFilter, emitToConversation, forViewer, WIPE_FIELDS,
   EDIT_WINDOW_MS, DELETE_FOR_EVERYONE_MS, MAX_PINNED, MAX_FORWARD_TARGETS,
@@ -130,7 +130,7 @@ export const sendMessage = async (req, res) => {
     const { fields, error } = await buildMessageFields(req.body);
     if (error) return res.status(400).json({ message: error });
     if (!(await replyBelongsTo(fields.replyTo, { a: senderId, b: receiverId }))) {
-      [fields.image, fields.fileUrl].forEach((f) => f && deleteUpload(f)); // the files were already stored: don't leave them behind
+      filesOfFields(fields).forEach((f) => deleteUpload(f)); // the files were already stored: don't leave them behind
       return res.status(400).json({ message: "Invalid reply target" });
     }
 
@@ -138,11 +138,10 @@ export const sendMessage = async (req, res) => {
     try {
       newMessage = await Message.create({ senderId, receiverId, ...fields, clientId, expiresAt: expiryFor(await dmDisappearAfter(senderId, receiverId)), deliveredAt: isUserOnline(receiverId) ? new Date() : undefined });
     } catch (e) {
-      // Two copies of the same send raced and the other one won: drop the files this attempt stored and answer with the winner
-      if (clientId && isDuplicateKeyError(e)) {
-        [fields.image, fields.fileUrl].forEach((f) => f && deleteUpload(f));
-        if (await replay()) return;
-      }
+      // The message was not stored, so this attempt's files are never used (any failure, not only a duplicate)
+      filesOfFields(fields).forEach((f) => deleteUpload(f));
+      // Two copies of the same send raced and the other one won: answer with the winner
+      if (clientId && isDuplicateKeyError(e) && (await replay())) return;
       throw e;
     }
     await newMessage.populate("replyTo", POPULATE_REPLY);
@@ -420,6 +419,7 @@ export const getStarred = async (req, res) => {
 // A forwarded copy gets its own files (so deleting the original for everyone can't break the copy). Returns null if a file is gone.
 const cloneForForward = async (src) => {
   const f = { forwarded: true };
+  const fail = () => { filesOfFields(f).forEach((p) => deleteUpload(p)); return null; }; // don't leave half a copy behind
   if (src.text) f.text = src.text;
   if (src.linkPreview?.url) {
     // The copy keeps the card (with its own copy of the thumbnail, for the same reason files are copied)
@@ -432,11 +432,11 @@ const cloneForForward = async (src) => {
   }
   if (src.image) {
     f.image = await copyUpload(src.image);
-    if (!f.image) return null;
+    if (!f.image) return fail();
   }
   if (src.fileUrl) {
     f.fileUrl = await copyUpload(src.fileUrl);
-    if (!f.fileUrl) return null;
+    if (!f.fileUrl) return fail();
     f.fileType = src.fileType;
     f.fileName = src.fileName;
     f.fileSize = src.fileSize;
@@ -471,6 +471,8 @@ export const forwardMessage = async (req, res) => {
       if (seen.has(key)) continue;
       seen.add(key);
       const fail = (error) => results.push({ type: t.type, id: t.id, ok: false, error });
+      let fields = null;
+      let stored = false; // once the message row exists it owns the copied files
       try {
         let group = null;
         if (t.type === "user") {
@@ -479,7 +481,7 @@ export const forwardMessage = async (req, res) => {
           group = await Group.findOne({ _id: t.id, members: me });
           if (!group) { fail("Not a member of that group"); continue; }
         }
-        const fields = await cloneForForward(src);
+        fields = await cloneForForward(src);
         if (!fields) { fail("The attachment is no longer available"); continue; }
 
         if (group) {
@@ -488,6 +490,7 @@ export const forwardMessage = async (req, res) => {
             expiresAt: expiryFor(group.disappearAfter),
             deliveredTo: deliveredNow(group.members, me, isUserOnline),
           });
+          stored = true;
           await msg.populate("senderId", PERSON_FIELDS);
           group.lastMessage = msg._id;
           await group.save();
@@ -497,6 +500,7 @@ export const forwardMessage = async (req, res) => {
           notifyGroup(msg, req.user, group);
         } else {
           const msg = await Message.create({ senderId: me, receiverId: t.id, ...fields, expiresAt: expiryFor(await dmDisappearAfter(me, t.id)), deliveredAt: isUserOnline(t.id) ? new Date() : undefined });
+          stored = true;
           emitToUser(t.id, "newMessage", forViewer(msg, t.id));
           emitToUser(me, "newMessage", forViewer(msg, me));
           notifyDM(msg, req.user);
@@ -504,6 +508,7 @@ export const forwardMessage = async (req, res) => {
         results.push({ type: t.type, id: t.id, ok: true });
       } catch (e) {
         console.log("forward target failed:", e.message);
+        if (fields && !stored) filesOfFields(fields).forEach((f) => deleteUpload(f)); // the copy was made but no message was stored for it
         fail("Couldn't forward");
       }
     }

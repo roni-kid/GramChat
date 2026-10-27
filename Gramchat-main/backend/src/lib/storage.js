@@ -2,8 +2,10 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { BACKEND_ROOT } from "./loadEnv.js";
 
-export const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || "uploads");
+// Relative UPLOAD_DIR values are relative to the backend folder (as .env.example says), not to wherever the server was started from.
+export const UPLOAD_DIR = path.resolve(BACKEND_ROOT, process.env.UPLOAD_DIR || "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // Allow-list of MIME types -> file extension. Anything else is refused.

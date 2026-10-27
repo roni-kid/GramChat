@@ -73,12 +73,19 @@ export const setPrefs = async (req, res) => {
 const lastTest = new Map();
 /** POST /api/push/test — sends a test notification to all of the caller's devices (10 s cooldown). */
 export const sendTest = async (req, res) => {
-  const id = req.user._id.toString();
-  if (Date.now() - (lastTest.get(id) || 0) < 10_000) return res.status(429).json({ message: "Wait a few seconds before sending another test" });
-  lastTest.set(id, Date.now());
-  if (!pushEnabled()) return res.status(503).json({ message: "Push notifications aren't enabled on this server" });
-  const count = await PushSubscription.countDocuments({ userId: req.user._id });
-  if (!count) return res.status(400).json({ message: "No device is subscribed yet" });
-  notifyTest(req.user._id); // fire and forget
-  res.status(200).json({ sentTo: count });
+  try {
+    const id = req.user._id.toString();
+    if (Date.now() - (lastTest.get(id) || 0) < 10_000) return res.status(429).json({ message: "Wait a few seconds before sending another test" });
+    lastTest.set(id, Date.now());
+    if (lastTest.size > 1000) for (const [k, t] of lastTest) if (Date.now() - t > 10_000) lastTest.delete(k); // keep the map small
+    if (!pushEnabled()) return res.status(503).json({ message: "Push notifications aren't enabled on this server" });
+    const count = await PushSubscription.countDocuments({ userId: req.user._id });
+    if (!count) return res.status(400).json({ message: "No device is subscribed yet" });
+    notifyTest(req.user._id); // fire and forget
+    res.status(200).json({ sentTo: count });
+  } catch (error) {
+    // Express 4 doesn't catch errors thrown in async handlers: without this a database hiccup leaves the request hanging
+    console.log("Error in push test:", error.message);
+    res.status(500).json({ message: "Internal server error" });
+  }
 };

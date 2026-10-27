@@ -1,5 +1,5 @@
 import Message from "../models/message.model.js";
-import { saveDataUrl, kindOf } from "./storage.js";
+import { saveDataUrl, deleteUpload, kindOf } from "./storage.js";
 import { isId } from "../middleware/validate.js";
 import { UNOPENED_EXPIRY_MS } from "./viewOnce.js";
 
@@ -30,8 +30,12 @@ const dataUrlMime = (s) => (typeof s === "string" ? s.match(/^data:([a-z0-9.+\-/
 const sanitizeWaveform = (v) =>
   Array.isArray(v) && v.length >= 8 && v.length <= 128 && v.every((n) => Number.isInteger(n) && n >= 0 && n <= 100) ? v : undefined;
 
+/** Public paths of every file a set of message fields refers to (what has to be deleted if the message is never stored). */
+export const filesOfFields = (fields) => [fields?.image, fields?.fileUrl, fields?.linkPreview?.image].filter(Boolean);
+
 /** Validates the common body of a DM/group message and stores any attachment on local disk.
- *  Returns { error } or { fields } ready for `new Message(...)`.
+ *  Returns { error } or { fields } ready for `new Message(...)`. If anything fails after a file was stored, that file is deleted again
+ *  (a rejected message must not leave uploads behind).
  *  `viewOnce: true` (Phase 2E) turns one photo, video or voice note into a view-once message: no caption, no reply, the file is
  *  stored under a "v…" name that is only ever served through a signed one-time link (see lib/viewOnce.js). */
 export const buildMessageFields = async (body = {}) => {
@@ -43,6 +47,7 @@ export const buildMessageFields = async (body = {}) => {
   if (voice != null && voice !== true) return { error: "Invalid voice message" };
   if (voice && (!fileUrl || image)) return { error: "A voice message needs exactly one audio recording" };
   if (viewOnce != null && viewOnce !== true) return { error: "Invalid view-once flag" };
+  if (replyToId && !isId(replyToId)) return { error: "Invalid reply target" }; // checked BEFORE any file is stored
 
   // View-once: exactly one photo, one video or one voice note; nothing else rides along
   let viewOnceKind;
@@ -58,24 +63,30 @@ export const buildMessageFields = async (body = {}) => {
   const prefix = viewOnce ? "v" : "";
 
   const fields = { text: voice || viewOnce ? undefined : cleanText || undefined };
-  if (image) {
-    const saved = await saveDataUrl(image, { maxBytes: 10 * 1024 * 1024, only: "image/", prefix });
-    fields.image = saved.url;
-  }
-  if (fileUrl) {
-    // A voice note must really be audio (the "voice" flag alone proves nothing)
-    const saved = await saveDataUrl(fileUrl, { maxBytes: voice ? 10 * 1024 * 1024 : 20 * 1024 * 1024, only: voice ? "audio/" : undefined, prefix });
-    fields.fileUrl = saved.url;
-    fields.fileType = kindOf(saved.mime);
-    fields.fileSize = saved.size;
-    fields.fileName = voice ? "Voice message" : typeof fileName === "string" ? fileName.replace(/[\r\n]/g, " ").slice(0, 200) : "file";
-    if (voice) {
-      fields.voice = true;
-      const d = Number(voiceDuration);
-      if (Number.isFinite(d) && d > 0) fields.voiceDuration = Math.min(Math.round(d), MAX_VOICE_SECONDS);
-      const peaks = sanitizeWaveform(body.voiceWaveform);
-      if (peaks && !viewOnce) fields.voiceWaveform = peaks;
+  try {
+    if (image) {
+      const saved = await saveDataUrl(image, { maxBytes: 10 * 1024 * 1024, only: "image/", prefix });
+      fields.image = saved.url;
     }
+    if (fileUrl) {
+      // A voice note must really be audio (the "voice" flag alone proves nothing)
+      const saved = await saveDataUrl(fileUrl, { maxBytes: voice ? 10 * 1024 * 1024 : 20 * 1024 * 1024, only: voice ? "audio/" : undefined, prefix });
+      fields.fileUrl = saved.url;
+      fields.fileType = kindOf(saved.mime);
+      fields.fileSize = saved.size;
+      fields.fileName = voice ? "Voice message" : typeof fileName === "string" ? fileName.replace(/[\r\n]/g, " ").slice(0, 200) : "file";
+      if (voice) {
+        fields.voice = true;
+        const d = Number(voiceDuration);
+        if (Number.isFinite(d) && d > 0) fields.voiceDuration = Math.min(Math.round(d), MAX_VOICE_SECONDS);
+        const peaks = sanitizeWaveform(body.voiceWaveform);
+        if (peaks && !viewOnce) fields.voiceWaveform = peaks;
+      }
+    }
+  } catch (e) {
+    // e.g. the photo was stored and then the second file was refused: don't leave the photo on disk
+    filesOfFields(fields).forEach((f) => deleteUpload(f));
+    throw e;
   }
   if (viewOnce) {
     fields.viewOnce = true;
@@ -83,10 +94,7 @@ export const buildMessageFields = async (body = {}) => {
     fields.wipeAt = new Date(Date.now() + UNOPENED_EXPIRY_MS); // never opened: the file is removed after 14 days
     if (!voice && fields.fileName) fields.fileName = "View-once media"; // the original file name is nobody's business
   }
-  if (replyToId) {
-    if (!isId(replyToId)) return { error: "Invalid reply target" };
-    fields.replyTo = replyToId;
-  }
+  if (replyToId) fields.replyTo = replyToId;
   return { fields };
 };
 

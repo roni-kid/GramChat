@@ -11,6 +11,7 @@
 import Message from "../models/message.model.js";
 import Group from "../models/group.model.js";
 import Contact from "../models/contact.model.js";
+import Status from "../models/status.model.js";
 import { pairKey } from "./relations.js";
 import { deleteUpload } from "./storage.js";
 import { emitToUser, emitToGroup } from "./socket.js";
@@ -43,7 +44,8 @@ const push = (map, key, id) => {
 
 let running = false;
 
-/** One pass: delete expired messages (rows, files, group previews) and tell the chats; wipe view-once media that is past its time. */
+/** One pass: delete expired messages (rows, files, group previews) and tell the chats; wipe view-once media that is past its time;
+ *  delete expired statuses and their pictures. */
 export const sweepOnce = async () => {
   if (running) return;
   running = true;
@@ -91,6 +93,13 @@ export const sweepOnce = async () => {
     // View-once media that is past its wipe time (never opened for 14 days, or opened and never closed)
     const stale = await Message.find({ viewOnce: true, mediaWiped: { $ne: true }, wipeAt: { $lte: now } }).limit(200);
     for (const m of stale) await wipeViewOnceMedia(m);
+
+    // Expired statuses: delete the rows AND their pictures (the status lists already hide them from the moment they expire)
+    const oldStatuses = await Status.find({ expiresAt: { $lte: now } }).select("_id image").limit(200).lean();
+    if (oldStatuses.length) {
+      await Status.deleteMany({ _id: { $in: oldStatuses.map((s) => s._id) }, expiresAt: { $lte: now } });
+      oldStatuses.forEach((s) => s.image && deleteUpload(s.image));
+    }
   } finally {
     running = false;
   }

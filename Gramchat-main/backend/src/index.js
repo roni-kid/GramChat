@@ -29,6 +29,16 @@ process.on("unhandledRejection", (reason) => {
   console.error("Unhandled promise rejection:", reason instanceof Error ? reason.message : reason);
 });
 
+// Same idea for a synchronous error nobody caught (for instance one thrown inside a socket event handler): print the full stack, so the
+// cause is visible in this window, and keep serving everybody else. While the server is still starting up, though, any such error
+// (port already in use, database not reachable...) must still stop it, otherwise it would sit there not listening.
+let started = false;
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err?.stack || err);
+  if (!started) process.exit(1);
+  console.error("(the server keeps running; if this repeats, send the lines above to whoever maintains GramChat)");
+});
+
 const PORT = getPort();
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(here, "../../frontend/dist");
@@ -84,5 +94,8 @@ app.use((err, _req, res, _next) => {
 await connectDB();
 await runMigrations();
 await initPush();
-server.listen(PORT, () => console.log("server is running on PORT:" + PORT));
+server.listen(PORT, () => {
+  started = true;
+  console.log("server is running on PORT:" + PORT);
+});
 startSweeper(); // deletes disappeared messages and view-once media that is past its time

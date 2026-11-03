@@ -14,13 +14,13 @@ import { formatListTime, previewOf } from "../lib/utils";
 import { useDraftStore } from "../store/useDraftStore";
 
 // "Draft: hello…" shown in the chat list for chats that have unsent text (not for the chat you're typing in)
-const DraftPreview = ({ text }) => (
+export const DraftPreview = ({ text }) => (
   <>
     <span className="text-error">Draft: </span>{text}
   </>
 );
 
-const CreateGroupModal = ({ users, onClose }) => {
+export const CreateGroupModal = ({ users, onClose }) => {
   const { createGroup } = useGroupStore();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

@@ -167,8 +167,13 @@ const StatusViewer = ({ statusGroup, onClose, onView }) => {
 const StatusPage = () => {
   const { getStatuses, subscribeToStatuses, unsubscribeFromStatuses, viewStatus, getStatusesByUser } = useStatusStore();
   const { authUser } = useAuthStore();
-  const [showCreate, setShowCreate] = useState(false);
-  const [viewingId, setViewingId] = useState(null); // whose statuses are open (the group itself is looked up live, below)
+  const [showCreate, setShowCreate] = useState(() => new URLSearchParams(window.location.search).get("add") === "1"); // "Add story" on the phone home screen lands here with ?add=1
+  const [viewingId, setViewingId] = useState(() => new URLSearchParams(window.location.search).get("view")); // whose statuses are open (the group itself is looked up live, below); ?view=<userId> opens one straight away
+
+  // The ?add / ?view hint has done its job; keep the address bar clean so a refresh doesn't reopen it
+  useEffect(() => {
+    if (window.location.search) window.history.replaceState({}, "", window.location.pathname);
+  }, []);
 
   useEffect(() => {
     getStatuses();

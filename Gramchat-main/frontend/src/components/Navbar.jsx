@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useAuthStore } from "../store/useAuthStore";
 import { useThemeStore } from "../store/useThemeStore";
 import { LogOut, MessageSquare, Moon, Settings, Sun, User, CircleDot } from "lucide-react";
@@ -6,6 +6,9 @@ import { LogOut, MessageSquare, Moon, Settings, Sun, User, CircleDot } from "luc
 const Navbar = () => {
   const { logout, authUser } = useAuthStore();
   const { theme, setTheme } = useThemeStore();
+  const { pathname } = useLocation();
+  // On a phone the chat list has its own header and bottom bar, so the top bar is only shown on desktop there
+  const hideOnPhone = !!authUser && pathname === "/";
 
   const isDark = ["dark", "night", "dracula", "black", "luxury", "coffee", "dim", "synthwave", "halloween", "forest", "aqua"].includes(theme);
 
@@ -14,7 +17,7 @@ const Navbar = () => {
   };
 
   return (
-    <header className="bg-base-100 border-b border-base-300 fixed w-full top-0 z-40 backdrop-blur-lg bg-base-100/80">
+    <header className={`bg-base-100 border-b border-base-300 fixed w-full top-0 z-40 backdrop-blur-lg bg-base-100/80 ${hideOnPhone ? "hidden lg:block" : ""}`}>
       <div className="container mx-auto px-4 h-16">
         <div className="flex items-center justify-between h-full">
           <div className="flex items-center gap-8">
